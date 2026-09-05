@@ -29,17 +29,18 @@ then open http://localhost:8123
 
 ## Deploy to Cloudflare Pages
 
-The app is static, so Cloudflare Pages hosts it for free:
+Deployed as the Cloudflare Pages project **english-words**, live at
+https://english-words-726.pages.dev. The `functions/tts.js` Pages Function
+serves the `/tts` voice proxy in production (mirroring `serve.py` locally).
 
-1. Push this repo to GitHub (or use direct upload).
-2. In the Cloudflare dashboard: **Workers & Pages → Create → Pages → Connect to git** (or "Upload assets").
-3. Build settings: no build command; set the output directory to `english-words`.
-4. Attach a custom subdomain, e.g. `words.your-domain.com`, under the project's **Custom domains**.
-
-Or from the CLI:
+To deploy after changes (wrangler login is cached on this machine):
 
 ```
-npx wrangler pages deploy english-words --project-name english-words
+powershell -File ..\deploy-english-words.ps1
 ```
+
+or from this folder: `npx wrangler pages deploy . --project-name english-words --branch main`
+
+When bumping app code, also bump the `?v=` query on style.css/app.js in index.html.
 
 Note: data is stored in the browser, so practicing on the phone and on the computer are separate — use backup/restore to sync, or we can later add a small backend (Cloudflare KV/D1) for shared storage.
