@@ -235,9 +235,10 @@ function voiceChoice() {
 
 let ttsAudio = null;
 
-/* served by our own origin: serve.py locally, a Pages Function on Cloudflare */
+/* served by our own origin: serve.py locally, a Pages Function on Cloudflare.
+   Relative URL so it also works when the app is mounted under a path prefix. */
 function googleTtsUrl(text, lang) {
-  return '/tts?tl=' + lang + '&q=' + encodeURIComponent(text);
+  return 'tts?tl=' + lang + '&q=' + encodeURIComponent(text);
 }
 
 /* play clips [{text, lang, rate}] one after another; onFail switches to browser TTS */
