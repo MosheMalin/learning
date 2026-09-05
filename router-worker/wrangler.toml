@@ -1,7 +1,7 @@
-name = "learning-router"
+﻿name = "learning-router"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
 routes = [
-  { pattern = "malinvishme.com/learning/english/heb-eng/spelling/5-grade*", zone_name = "malinvishme.com" }
+  { pattern = "malinvishne.com", custom_domain = true }
 ]
