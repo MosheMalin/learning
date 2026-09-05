@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "english-words",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["serve.py", "english-words", "8123"],
+      "port": 8123
+    }
+  ]
+}

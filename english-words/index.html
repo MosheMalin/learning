@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>המילים שלי ✨ תרגול אנגלית</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦄</text></svg>">
+<link rel="stylesheet" href="style.css?v=9">
+</head>
+<body>
+
+<header class="app-header">
+  <h1 id="app-title">✨ המילים שלי ✨</h1>
+  <p class="subtitle">תרגול הכתבה באנגלית</p>
+</header>
+
+<main id="main">
+
+  <!-- ===== Home: all word lists ===== -->
+  <section id="screen-home" class="screen">
+    <button id="btn-new-list" class="big-btn primary">➕ רשימה חדשה</button>
+    <div id="lists-container"></div>
+    <div class="backup-row">
+      <button id="btn-export" class="tiny-btn">💾 גיבוי</button>
+      <button id="btn-import" class="tiny-btn">📂 שחזור מגיבוי</button>
+      <input type="file" id="import-file" accept=".json" hidden>
+    </div>
+  </section>
+
+  <!-- ===== List editor ===== -->
+  <section id="screen-editor" class="screen" hidden>
+    <h2 id="editor-title">רשימה חדשה 📝</h2>
+    <div class="form-card">
+      <label>שם הרשימה
+        <input type="text" id="list-name" placeholder="למשל: מילים לשבוע 1">
+      </label>
+      <label>תאריך המבחן 📅 (לא חובה)</label>
+      <div class="date-field">
+        <button id="btn-pick-date" class="small-btn" type="button">📅 בחירת תאריך</button>
+        <span id="date-display" class="date-display"></span>
+        <button id="btn-clear-date" class="tiny-btn" type="button" hidden>✖ בלי תאריך</button>
+      </div>
+    </div>
+    <h3 class="words-heading">המילים 🔤</h3>
+    <div id="word-rows"></div>
+    <button id="btn-add-row" class="small-btn">➕ עוד מילה</button>
+    <div class="editor-actions">
+      <button id="btn-save-list" class="big-btn primary">💜 שמירה</button>
+      <button id="btn-cancel-edit" class="big-btn ghost">ביטול</button>
+    </div>
+  </section>
+
+  <!-- ===== List view: details + choose practice ===== -->
+  <section id="screen-list" class="screen" hidden>
+    <button class="back-btn" data-back="home">→ חזרה למסך הראשי</button>
+    <h2 id="list-title"></h2>
+    <p id="list-meta" class="list-meta"></p>
+    <div class="voice-seg">
+      <span class="voice-label">🔊 הקול שמקריא:</span>
+      <select class="voice-select"></select>
+      <button type="button" class="voice-sample">▶ דוגמה</button>
+    </div>
+    <div class="practice-menu">
+      <button class="mode-btn" data-mode="he2en">
+        <span class="mode-emoji">🇮🇱➡️🇬🇧</span>
+        <span class="mode-name">מעברית לאנגלית</span>
+        <span class="mode-desc">רואים מילה בעברית וכותבים באנגלית</span>
+      </button>
+      <button class="mode-btn" data-mode="en2he">
+        <span class="mode-emoji">🇬🇧➡️🇮🇱</span>
+        <span class="mode-name">מאנגלית לעברית</span>
+        <span class="mode-desc">רואים מילה באנגלית וכותבים בעברית</span>
+      </button>
+      <button class="mode-btn" data-mode="listen">
+        <span class="mode-emoji">🎧</span>
+        <span class="mode-name">הכתבה בשמיעה</span>
+        <span class="mode-desc">שומעים את המילה וכותבים אותה באנגלית</span>
+      </button>
+    </div>
+    <div id="word-table-wrap">
+      <h3 class="words-heading">המילים ברשימה</h3>
+      <table id="word-table">
+        <thead><tr><th>עברית</th><th>English</th><th>🔊</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="list-actions">
+      <button id="btn-edit-list" class="small-btn">✏️ עריכה</button>
+      <button id="btn-delete-list" class="small-btn danger">🗑️ מחיקה</button>
+    </div>
+  </section>
+
+  <!-- ===== Practice ===== -->
+  <section id="screen-practice" class="screen" hidden>
+    <button class="back-btn" data-back="list">✖ יציאה</button>
+    <div class="voice-seg compact">
+      <span class="voice-label">🔊 קול:</span>
+      <select class="voice-select"></select>
+      <button type="button" class="voice-sample">▶</button>
+    </div>
+    <div class="progress-track"><div id="progress-fill"></div></div>
+    <p id="practice-counter" class="counter"></p>
+    <div class="question-card" id="question-card">
+      <div id="question-word" class="question-word"></div>
+      <button id="btn-speak" class="speak-btn" hidden>🔊 להשמיע שוב</button>
+      <input type="text" id="answer-input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="כתבי את התשובה כאן...">
+      <button id="btn-check" class="big-btn primary">בדיקה ✔</button>
+      <div id="feedback" class="feedback" hidden></div>
+      <button id="btn-next" class="big-btn primary" hidden>הבאה ⬅</button>
+    </div>
+  </section>
+
+  <!-- ===== Summary ===== -->
+  <section id="screen-summary" class="screen" hidden>
+    <div class="summary-card">
+      <div id="summary-stars" class="summary-stars"></div>
+      <h2 id="summary-title"></h2>
+      <p id="summary-score" class="summary-score"></p>
+      <div id="summary-mistakes"></div>
+      <div class="summary-actions">
+        <button id="btn-retry-wrong" class="big-btn primary" hidden>💪 לתרגל את הטעויות</button>
+        <button id="btn-practice-again" class="big-btn">🔁 עוד פעם הכל</button>
+        <button id="btn-back-home" class="big-btn ghost">🏠 לרשימה</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Hebrew calendar date picker -->
+<div id="heb-cal-overlay" class="cal-overlay" hidden>
+  <div class="cal-card">
+    <div class="cal-header">
+      <button id="cal-nav-next" class="cal-nav" title="חודש הבא">❯</button>
+      <div id="cal-title" class="cal-title"></div>
+      <button id="cal-nav-prev" class="cal-nav" title="חודש קודם">❮</button>
+    </div>
+    <div class="cal-weekdays" id="cal-weekdays"></div>
+    <div class="cal-grid" id="cal-grid"></div>
+    <div class="cal-footer">
+      <button id="cal-close" class="tiny-btn">סגירה</button>
+    </div>
+  </div>
+</div>
+
+<!-- keyboard language magic toggle -->
+<button id="kbd-magic" title="כשזה פועל, האותיות יוצאות תמיד בשפה הנכונה - בלי להחליף שפה במקלדת"></button>
+
+<!-- confirm / message dialog -->
+<div id="modal-overlay" class="cal-overlay" hidden>
+  <div class="modal-card">
+    <p id="modal-msg"></p>
+    <div class="modal-actions">
+      <button id="modal-ok" class="big-btn primary">אישור</button>
+      <button id="modal-cancel" class="big-btn ghost">ביטול</button>
+    </div>
+  </div>
+</div>
+
+<div id="confetti-layer"></div>
+<script src="app.js?v=10"></script>
+</body>
+</html>
