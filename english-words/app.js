@@ -4,7 +4,7 @@ const STORAGE_KEY = 'english-words-lists';
 
 /* Google OAuth Client ID - must match GOOGLE_CLIENT_ID in wrangler.toml.
    Empty = the sign-in button is hidden and the app runs in local-only mode. */
-const GOOGLE_CLIENT_ID = '';
+const GOOGLE_CLIENT_ID = '731852048497-pved0t60dqc1pskdkj6tko4ct0qs8dtn.apps.googleusercontent.com';
 
 /* ---------- Storage ----------
    Guest mode: lists live in localStorage on this device.

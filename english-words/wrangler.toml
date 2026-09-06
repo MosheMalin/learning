@@ -5,7 +5,7 @@ compatibility_date = "2026-09-01"
 [vars]
 # Google OAuth Client ID (public identifier, not a secret).
 # Must match GOOGLE_CLIENT_ID in app.js.
-GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_ID = "731852048497-pved0t60dqc1pskdkj6tko4ct0qs8dtn.apps.googleusercontent.com"
 
 [[kv_namespaces]]
 binding = "LEARNING_KV"
