@@ -46,6 +46,7 @@ let editingListId = null;   // list being edited (null = new)
 /* ---------- Screens ---------- */
 
 const screens = {
+  login: document.getElementById('screen-login'),
   home: document.getElementById('screen-home'),
   editor: document.getElementById('screen-editor'),
   list: document.getElementById('screen-list'),
@@ -61,6 +62,7 @@ function show(name) {
 }
 
 document.getElementById('app-title').addEventListener('click', () => {
+  if (!currentUser) return; // login is mandatory
   renderHome();
   show('home');
 });
@@ -1040,7 +1042,7 @@ function renderCalendar() {
   // always 6 rows so the calendar keeps the same size in every month
   while (grid.children.length < 42) addEmpty();
 
-  // ❯ (right) = forward to next month, ❮ (left) = back to previous month
+  // RTL time direction: ❮ (left) = forward to next month, ❯ (right) = back
   document.getElementById('cal-nav-next').onclick = () => { calViewDate = addDays(last, 1); renderCalendar(); };
   document.getElementById('cal-nav-prev').onclick = () => { calViewDate = addDays(first, -1); renderCalendar(); };
 }
@@ -1057,14 +1059,15 @@ function renderAuthUi() {
       <span>שלום, ${escapeHtml(currentUser.name)}! ☁️</span>
       <button id="btn-logout" class="tiny-btn">יציאה</button>`;
     document.getElementById('btn-logout').addEventListener('click', logout);
-  } else if (GOOGLE_CLIENT_ID) {
-    authArea.innerHTML = '<div id="gsi-btn"></div>';
-    if (gisReady) {
-      google.accounts.id.renderButton(document.getElementById('gsi-btn'),
-        { theme: 'outline', size: 'medium', shape: 'pill', locale: 'he' });
-    }
   } else {
     authArea.innerHTML = '';
+    // login is mandatory: the sign-in button lives on the gate screen
+    const holder = document.getElementById('gsi-btn-gate');
+    if (holder && gisReady) {
+      holder.innerHTML = '';
+      google.accounts.id.renderButton(holder,
+        { theme: 'filled_blue', size: 'large', shape: 'pill', locale: 'he' });
+    }
   }
 }
 
@@ -1119,10 +1122,9 @@ async function loadCloudLists() {
 async function logout() {
   try { await fetch('api/logout', { method: 'POST' }); } catch {}
   currentUser = null;
-  lists = loadLists(); // back to this device's local (guest) lists
+  lists = [];
   renderAuthUi();
-  renderHome();
-  show('home');
+  show('login');
 }
 
 async function initAuth() {
@@ -1136,9 +1138,10 @@ async function initAuth() {
     }
   } catch {}
   renderAuthUi();
+  show('login');
 }
 
 /* ---------- Init ---------- */
 
-renderHome();
+show('login');
 initAuth();

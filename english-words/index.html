@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>המילים שלי ✨ תרגול אנגלית</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦄</text></svg>">
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
 
@@ -16,6 +16,17 @@
 </header>
 
 <main id="main">
+
+  <!-- ===== Login gate ===== -->
+  <section id="screen-login" class="screen" hidden>
+    <div class="login-card">
+      <div class="login-emoji">🦄</div>
+      <h2>ברוכים הבאים!</h2>
+      <p>כדי להתחיל, מתחברים עם חשבון Google:</p>
+      <div id="gsi-btn-gate" class="gsi-holder"></div>
+      <p class="login-note">☁️ כל אחד רואה רק את הרשימות שלו, מכל מכשיר</p>
+    </div>
+  </section>
 
   <!-- ===== Home: all word lists ===== -->
   <section id="screen-home" class="screen">
@@ -132,9 +143,9 @@
 <div id="heb-cal-overlay" class="cal-overlay" hidden>
   <div class="cal-card">
     <div class="cal-header">
-      <button id="cal-nav-next" class="cal-nav" title="חודש הבא">❯</button>
+      <button id="cal-nav-prev" class="cal-nav" title="חודש קודם">❯</button>
       <div id="cal-title" class="cal-title"></div>
-      <button id="cal-nav-prev" class="cal-nav" title="חודש קודם">❮</button>
+      <button id="cal-nav-next" class="cal-nav" title="חודש הבא">❮</button>
     </div>
     <div class="cal-weekdays" id="cal-weekdays"></div>
     <div class="cal-grid" id="cal-grid"></div>
@@ -159,6 +170,6 @@
 </div>
 
 <div id="confetti-layer"></div>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
