@@ -2,7 +2,15 @@
 
 const STORAGE_KEY = 'english-words-lists';
 
-/* ---------- Storage ---------- */
+/* Google OAuth Client ID - must match GOOGLE_CLIENT_ID in wrangler.toml.
+   Empty = the sign-in button is hidden and the app runs in local-only mode. */
+const GOOGLE_CLIENT_ID = '';
+
+/* ---------- Storage ----------
+   Guest mode: lists live in localStorage on this device.
+   Signed in: lists live in the cloud (per Google account), localStorage untouched. */
+
+let currentUser = null; // {sub, email, name, picture} when signed in
 
 function loadLists() {
   try {
@@ -12,8 +20,23 @@ function loadLists() {
   }
 }
 
-function saveLists(lists) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(lists));
+let cloudPushTimer = null;
+
+function saveLists(l) {
+  if (currentUser) {
+    clearTimeout(cloudPushTimer);
+    cloudPushTimer = setTimeout(pushCloudLists, 800);
+  } else {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(l));
+  }
+}
+
+function pushCloudLists() {
+  return fetch('api/lists', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(lists),
+  }).catch(() => {});
 }
 
 let lists = loadLists();
@@ -1022,6 +1045,100 @@ function renderCalendar() {
   document.getElementById('cal-nav-prev').onclick = () => { calViewDate = addDays(first, -1); renderCalendar(); };
 }
 
+/* ---------- Google sign-in / multi-user ---------- */
+
+const authArea = document.getElementById('auth-area');
+let gisReady = false;
+
+function renderAuthUi() {
+  if (currentUser) {
+    authArea.innerHTML = `
+      ${currentUser.picture ? `<img class="avatar" src="${escapeHtml(currentUser.picture)}" alt="">` : ''}
+      <span>שלום, ${escapeHtml(currentUser.name)}! ☁️</span>
+      <button id="btn-logout" class="tiny-btn">יציאה</button>`;
+    document.getElementById('btn-logout').addEventListener('click', logout);
+  } else if (GOOGLE_CLIENT_ID) {
+    authArea.innerHTML = '<div id="gsi-btn"></div>';
+    if (gisReady) {
+      google.accounts.id.renderButton(document.getElementById('gsi-btn'),
+        { theme: 'outline', size: 'medium', shape: 'pill', locale: 'he' });
+    }
+  } else {
+    authArea.innerHTML = '';
+  }
+}
+
+function loadGis() {
+  if (!GOOGLE_CLIENT_ID) return;
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.async = true;
+  s.onload = () => {
+    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential });
+    gisReady = true;
+    renderAuthUi();
+  };
+  document.head.appendChild(s);
+}
+
+async function onGoogleCredential(resp) {
+  try {
+    const r = await fetch('api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential: resp.credential }),
+    });
+    if (!r.ok) { showAlert('ההתחברות נכשלה 😕 נסו שוב'); return; }
+    currentUser = await r.json();
+    await loadCloudLists();
+  } catch {
+    showAlert('ההתחברות נכשלה 😕 נסו שוב');
+  }
+}
+
+async function loadCloudLists() {
+  try {
+    const r = await fetch('api/lists');
+    if (r.ok) {
+      const cloud = (await r.json()).lists || [];
+      const local = loadLists();
+      if (cloud.length === 0 && local.length > 0) {
+        // first sign-in on this device: copy the local lists into the account
+        lists = local;
+        await pushCloudLists();
+      } else {
+        lists = cloud;
+      }
+    }
+  } catch {}
+  renderAuthUi();
+  renderHome();
+  show('home');
+}
+
+async function logout() {
+  try { await fetch('api/logout', { method: 'POST' }); } catch {}
+  currentUser = null;
+  lists = loadLists(); // back to this device's local (guest) lists
+  renderAuthUi();
+  renderHome();
+  show('home');
+}
+
+async function initAuth() {
+  loadGis();
+  try {
+    const r = await fetch('api/me');
+    if (r.ok) {
+      currentUser = await r.json();
+      await loadCloudLists();
+      return;
+    }
+  } catch {}
+  renderAuthUi();
+}
+
 /* ---------- Init ---------- */
 
 renderHome();
+initAuth();
