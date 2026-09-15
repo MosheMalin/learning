@@ -54,11 +54,9 @@ touching the code - `SENTENCES_MODEL` for writing the sentences, `CHECK_MODEL` f
 marking what she wrote. Both default to `claude-opus-5`. Writing simple sentences
 is the easier job of the two, so it is the better candidate for a cheaper model
 (`claude-haiku-4-5`, `claude-sonnet-5`); marking a child's writing and answering
-her in warm, correct Hebrew is the one worth keeping capable. Set either with:
-
-```
-npx wrangler pages secret put SENTENCES_MODEL --project-name english-words
-```
+her in warm, correct Hebrew is the one worth keeping capable. They live in
+`wrangler.toml` under `[vars]` next to `GOOGLE_CLIENT_ID` - edit the value there
+and deploy. Only the API key is a secret; a model name isn't.
 
 Note that a model restriction on the Console workspace is not a way to choose the
 model - the app asks for one by name, so blocking it stops the feature rather

@@ -7,6 +7,14 @@ compatibility_date = "2026-09-01"
 # Must match GOOGLE_CLIENT_ID in app.js.
 GOOGLE_CLIENT_ID = "731852048497-pved0t60dqc1pskdkj6tko4ct0qs8dtn.apps.googleusercontent.com"
 
+# Which model writes the practice sentences, and which one marks the sentences
+# she writes herself. Not secrets - only the API key is.
+# Cheaper options: claude-sonnet-5, claude-haiku-4-5.
+# Writing simple sentences is the easier job; marking her writing and replying
+# in warm, correct Hebrew is the one worth keeping capable.
+SENTENCES_MODEL = "claude-opus-5"
+CHECK_MODEL = "claude-opus-5"
+
 [[kv_namespaces]]
 binding = "LEARNING_KV"
 id = "cf6e4104021740bda556bc55989b2886"
