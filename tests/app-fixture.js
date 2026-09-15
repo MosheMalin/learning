@@ -26,6 +26,33 @@ const test = base.extend({
       r.fulfill({ json: { lists: [{ id: 'l1', name: 'רשימת בדיקה', date: '', words: WORDS }] } }));
     await page.route('**/tts**', r => r.fulfill({ status: 204, body: '' }));
 
+    // the Claude-backed routes: a fixed bank, and a marker with predictable
+    // verdicts, so the sentence exercises are testable without an API key
+    const bank = {};
+    const fill = w => ({
+      en: w.en, he: w.he,
+      sentences: Array.from({ length: 10 }, (_, i) => ({
+        text: `Sentence number ${i} about the ___ here.`,
+        // "dog" and "cat" stand in for a blank more than one word fits
+        accept: w.en === 'dog' ? ['dog', 'cat'] : [w.en],
+      })),
+    });
+    await page.route('**/api/sentences**', async r => {
+      const first = Object.keys(bank).length === 0;
+      if (r.request().method() === 'POST') {
+        // hand them over four at a time, as the real route does
+        WORDS.filter(w => !bank[w.en]).slice(0, 4).forEach(w => { bank[w.en] = fill(w); });
+      }
+      const remaining = WORDS.filter(w => !bank[w.en]).length;
+      await r.fulfill({ json: { words: bank, remaining, ready: remaining === 0 && !first } });
+    });
+    await page.route('**/api/sentence-check', async r => {
+      const { word, sentence } = r.request().postDataJSON();
+      const verdict = !sentence.includes(word) ? 'try_again'
+        : /^[A-Z].*[.!?]$/.test(sentence.trim()) ? 'great' : 'almost';
+      await r.fulfill({ json: { verdict, feedback: 'משוב לבדיקה', correction: 'I have a ' + word + '.' } });
+    });
+
     await page.goto('/index.html');
     await page.waitForSelector('#screen-home:not([hidden])');
     await page.click('#lists-container .list-card');

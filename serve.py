@@ -6,6 +6,9 @@ Usage: python serve.py <directory> [port]
 - /tts?tl=en&q=hello -> streams MP3 speech from Google Translate TTS
 - /api/* -> fake local versions of the production auth/storage API
   (any login is accepted as a "dev user"; lists persist to dev-lists.json)
+- /api/sentences, /api/sentence-check -> canned stand-ins for the Claude-backed
+  routes, so the sentence exercises can be worked on without an API key. The
+  sentences are obviously fake on purpose - never mistake them for the real ones.
 In production these routes are served by Cloudflare Pages Functions.
 """
 import functools
@@ -18,6 +21,25 @@ from urllib.request import Request, urlopen
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dev-lists.json')
 DEV_USER = {'sub': 'dev', 'email': 'dev@local', 'name': 'משתמש פיתוח', 'picture': ''}
+
+# in-memory stand-in for the KV sentence bank: {listId: {word: {...}}}
+DEV_BANK = {}
+DEV_FRAMES = [
+    'My ___ is here today.',
+    'I can see a ___ outside.',
+    'She likes the ___ very much.',
+    'We found a ___ in the garden.',
+    'The ___ is on the table.',
+    'My friend has a ___ too.',
+    'I want a ___ please.',
+    'This ___ is very nice.',
+    'He looked at the ___ and smiled.',
+    'Yesterday I saw a ___ there.',
+]
+
+
+def dev_sentences(word):
+    return [{'text': f, 'accept': [word['en']]} for f in DEV_FRAMES]
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -53,6 +75,15 @@ class Handler(SimpleHTTPRequestHandler):
             if self.has_session():
                 return self.send_json(DEV_USER)
             return self.send_json({'error': 'not logged in'}, 401)
+        if path == '/api/sentences':
+            if not self.has_session():
+                return self.send_json({'error': 'not logged in'}, 401)
+            qs = parse_qs(urlparse(self.path).query)
+            list_id = qs.get('listId', [''])[0]
+            bank = DEV_BANK.get(list_id, {})
+            missing = self.missing_words(list_id, bank)
+            return self.send_json({'words': bank, 'remaining': len(missing),
+                                   'ready': not missing})
         if path == '/api/lists':
             if not self.has_session():
                 return self.send_json({'error': 'not logged in'}, 401)
@@ -66,16 +97,69 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        self.read_body()
+        body = self.read_body()
         if path == '/api/login':
             return self.send_json(DEV_USER, cookies=['sid=dev; Path=/'])
         if path == '/api/logout':
             return self.send_json({'ok': True}, cookies=['sid=; Max-Age=0; Path=/'])
+        if path == '/api/sentences':
+            if not self.has_session():
+                return self.send_json({'error': 'not logged in'}, 401)
+            list_id = (json.loads(body or b'{}') or {}).get('listId', '')
+            bank = DEV_BANK.setdefault(list_id, {})
+            # four words per call, exactly like the real route
+            for word in self.missing_words(list_id, bank)[:4]:
+                bank[word['en'].strip().lower()] = {
+                    'en': word['en'], 'he': word['he'], 'sentences': dev_sentences(word)}
+            missing = self.missing_words(list_id, bank)
+            return self.send_json({'words': bank, 'remaining': len(missing),
+                                   'ready': not missing, 'stuck': False})
+        if path == '/api/sentence-check':
+            if not self.has_session():
+                return self.send_json({'error': 'not logged in'}, 401)
+            data = json.loads(body or b'{}') or {}
+            return self.send_json(self.fake_check(data.get('word', ''),
+                                                  data.get('sentence', '')))
         self.send_error(404)
+
+    def missing_words(self, list_id, bank):
+        try:
+            with open(DATA_FILE, encoding='utf-8') as f:
+                lists = json.load(f)
+        except Exception:
+            lists = []
+        wanted = next((l for l in lists if l.get('id') == list_id), None)
+        words = (wanted or {}).get('words', [])
+        return [w for w in words if w.get('en') and w['en'].strip().lower() not in bank]
+
+    @staticmethod
+    def fake_check(word, sentence):
+        """A crude stand-in for Claude, good enough to drive the UI locally."""
+        text = sentence.strip()
+        if word.lower() not in text.lower():
+            return {'verdict': 'try_again',
+                    'feedback': f'לא השתמשת במילה {word} 🙂',
+                    'correction': f'I like my {word}.'}
+        if not text[:1].isupper() or text[-1:] not in '.!?':
+            return {'verdict': 'almost',
+                    'feedback': 'כמעט! משפט מתחיל באות גדולה ונגמר בנקודה ✍️',
+                    'correction': text[:1].upper() + text[1:].rstrip('.') + '.'}
+        return {'verdict': 'great',
+                'feedback': 'משפט יפה מאוד! כל הכבוד 🌟',
+                'correction': text}
 
     def do_PUT(self):
         path = urlparse(self.path).path
         body = self.read_body()
+        if path == '/api/sentences':
+            if not self.has_session():
+                return self.send_json({'error': 'not logged in'}, 401)
+            qs = parse_qs(urlparse(self.path).query)
+            list_id = qs.get('listId', [''])[0]
+            bank = DEV_BANK.get(list_id, {})
+            missing = self.missing_words(list_id, bank)
+            return self.send_json({'words': bank, 'remaining': len(missing),
+                                   'ready': not missing})
         if path == '/api/lists':
             if not self.has_session():
                 return self.send_json({'error': 'not logged in'}, 401)

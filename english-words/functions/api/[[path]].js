@@ -1,7 +1,20 @@
 // Multi-user API: Google sign-in sessions + per-user word lists in KV.
-// Routes: POST /api/login, POST /api/logout, GET /api/me, GET|PUT /api/lists
+// Routes: POST /api/login, POST /api/logout, GET /api/me, GET|PUT /api/lists,
+//         GET|POST /api/sentences, POST /api/sentence-check
+//
+// The two sentence routes are the only ones that call Claude. Sentences are
+// generated once per list and then frozen in KV - practice itself never needs
+// the network, so a round plays the same offline as online.
+
+import Anthropic from '@anthropic-ai/sdk';
 
 const SESSION_TTL = 60 * 60 * 24 * 30; // 30 days
+
+const MODEL = 'claude-opus-5';
+const SENTENCES_PER_WORD = 10;
+const WORDS_PER_CALL = 4;      // keeps one request well inside the response window
+const MAX_WORDS_PER_LIST = 40;
+const DAILY_CALL_BUDGET = 400; // per user, protects the API key from a runaway loop
 
 function getCookie(request, name) {
   const c = request.headers.get('Cookie') || '';
@@ -21,6 +34,128 @@ const json = (obj, status = 200, headers = {}) =>
     status,
     headers: { 'Content-Type': 'application/json', ...headers },
   });
+
+/* ---------- Claude-backed sentence bank ----------
+   One list's sentences are generated once and then frozen: new words added to
+   a list get their own sentences, existing ones are never rewritten. */
+
+const normWord = w => (w || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const bankKey = (user, listId) => `user:${user.sub}:sentences:${listId}`;
+
+/* a rough daily ceiling per user, so a stuck client can't burn the API key */
+async function withinBudget(env, user, n) {
+  const key = `budget:${user.sub}:${new Date().toISOString().slice(0, 10)}`;
+  const used = Number(await env.LEARNING_KV.get(key)) || 0;
+  if (used + n > DAILY_CALL_BUDGET) return false;
+  await env.LEARNING_KV.put(key, String(used + n), { expirationTtl: 60 * 60 * 48 });
+  return true;
+}
+
+async function askClaude(env, { system, prompt, schema, effort = 'medium' }) {
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const res = await client.messages.create({
+    model: MODEL,
+    max_tokens: 16000,
+    system,
+    messages: [{ role: 'user', content: prompt }],
+    output_config: { effort, format: { type: 'json_schema', schema } },
+  });
+  const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  return JSON.parse(text);
+}
+
+const SENTENCES_SCHEMA = {
+  type: 'object',
+  properties: {
+    words: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          word: { type: 'string' },
+          sentences: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string' },
+                accept: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['text', 'accept'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['word', 'sentences'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['words'],
+  additionalProperties: false,
+};
+
+const SENTENCES_SYSTEM = `You write example sentences for a 10-year-old Israeli girl learning English as a foreign language (her mother tongue is Hebrew). She is practising a fixed list of words for her weekly spelling test.
+
+For each target word you are given, write exactly ${SENTENCES_PER_WORD} different sentences. Every sentence must follow all of these rules:
+- Write the sentence with the target word replaced by exactly one blank: ___ (three underscores). Exactly one blank per sentence, and the target word must not appear anywhere else in it.
+- The blank stands for the target word spelled exactly as given. Never inflect it - no -s, no -ed, no -ing, no capitalisation change beyond the start of a sentence. If a natural sentence would need a different form, write a different sentence instead.
+- 4 to 9 words long. Present simple or past simple only. Everyday beginner vocabulary apart from the target word.
+- Concrete, friendly and age-appropriate. Vary the situation across the ${SENTENCES_PER_WORD} sentences - home, school, friends, animals, food, family, weather, playground - so she cannot memorise them.
+- Give enough context that the target word is a sensible answer for the blank.
+
+For "accept", list every word from the full word list that would also make a correct, sensible sentence in that blank - always including the target word itself. Add another word only if the sentence genuinely works with it. Use the exact spelling from the list.`;
+
+async function generateSentences(env, allWords, targets) {
+  const vocab = allWords.map(w => `${w.en} (${w.he})`).join(', ');
+  const prompt = `The full word list she is practising: ${vocab}.\n\n` +
+    `Write sentences for these target words: ${targets.map(w => w.en).join(', ')}.`;
+  const out = await askClaude(env, {
+    system: SENTENCES_SYSTEM, prompt, schema: SENTENCES_SCHEMA,
+  });
+  const known = new Set(allWords.map(w => normWord(w.en)));
+  const clean = {};
+  for (const entry of out.words || []) {
+    const target = targets.find(t => normWord(t.en) === normWord(entry.word));
+    if (!target) continue;
+    const sentences = (entry.sentences || [])
+      // a sentence is only usable if it has exactly one blank to fill
+      .filter(s => s && typeof s.text === 'string' && s.text.split('___').length === 2)
+      .map(s => ({
+        text: s.text.trim(),
+        // keep only real list words, and make sure the target is always accepted
+        accept: [...new Set([
+          target.en,
+          ...(Array.isArray(s.accept) ? s.accept : []).filter(a => known.has(normWord(a))),
+        ])],
+      }));
+    if (sentences.length) clean[normWord(target.en)] = { en: target.en, he: target.he, sentences };
+  }
+  return clean;
+}
+
+const CHECK_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['great', 'almost', 'try_again'] },
+    feedback: { type: 'string' },
+    correction: { type: 'string' },
+  },
+  required: ['verdict', 'feedback', 'correction'],
+  additionalProperties: false,
+};
+
+const CHECK_SYSTEM = `A 10-year-old Israeli girl learning English (mother tongue Hebrew) was asked to write her own English sentence using one target word. Judge her sentence.
+
+"great": she used the target word with its real meaning and the sentence is understandable and basically correct. Small slips that a native reader would not stumble over - a missing full stop, a lower-case first letter - are still "great".
+"almost": the meaning comes through and the target word is used sensibly, but there is one clear mistake to fix (a wrong verb form, a missing article, a misspelled word, wrong word order).
+"try_again": she did not use the target word, used it with the wrong meaning, or the sentence cannot be understood.
+
+Be generous and encouraging - this is a beginner writing a foreign language, not an exam. Never ask for longer or fancier sentences; a short correct sentence is a great sentence.
+
+"feedback": one or two short sentences in simple Hebrew, warm and specific. Name the single most useful thing to fix, and say what she did well. Do not use English grammar jargon.
+"correction": her sentence rewritten correctly in English, keeping her idea and her words as far as possible. If nothing needs fixing, repeat her sentence unchanged.`;
 
 export async function onRequest({ request, env, params }) {
   const path = (params.path || []).join('/');
@@ -78,6 +213,83 @@ export async function onRequest({ request, env, params }) {
       if (!Array.isArray(data)) return json({ error: 'expected an array' }, 400);
       await env.LEARNING_KV.put(key, body);
       return json({ ok: true });
+    }
+  }
+
+  /* Sentence bank for one list.
+     GET  -> what we already have (never calls Claude)
+     POST -> generate the next few missing words, then report what is left */
+  if (path === 'sentences') {
+    if (!user) return json({ error: 'not logged in' }, 401);
+    const { listId } = method === 'POST'
+      ? await request.json().catch(() => ({}))
+      : { listId: new URL(request.url).searchParams.get('listId') };
+    if (!listId) return json({ error: 'missing listId' }, 400);
+
+    const raw = await env.LEARNING_KV.get(bankKey(user, listId));
+    const bank = raw ? JSON.parse(raw) : { listId, words: {} };
+
+    const listsRaw = await env.LEARNING_KV.get('user:' + user.sub + ':lists');
+    const list = (listsRaw ? JSON.parse(listsRaw) : []).find(l => l.id === listId);
+    if (!list) return json({ error: 'no such list' }, 404);
+    const words = (list.words || []).filter(w => w && w.en && w.he).slice(0, MAX_WORDS_PER_LIST);
+    const missing = words.filter(w => !bank.words[normWord(w.en)]);
+
+    if (method === 'GET' || missing.length === 0) {
+      return json({ words: bank.words, remaining: missing.length, ready: missing.length === 0 });
+    }
+    if (method !== 'POST') return json({ error: 'not found' }, 404);
+
+    if (!env.ANTHROPIC_API_KEY) {
+      return json({ error: 'sentence generation is not configured' }, 503);
+    }
+    if (!await withinBudget(env, user, 1)) {
+      return json({ error: 'daily limit reached' }, 429);
+    }
+
+    const batch = missing.slice(0, WORDS_PER_CALL);
+    let made;
+    try {
+      made = await generateSentences(env, words, batch);
+    } catch (e) {
+      return json({ error: 'generation failed', detail: String(e && e.message || e) }, 502);
+    }
+    // merge: only ever add words, never rewrite sentences we already have
+    for (const [key, entry] of Object.entries(made)) {
+      if (!bank.words[key]) bank.words[key] = entry;
+    }
+    await env.LEARNING_KV.put(bankKey(user, listId), JSON.stringify(bank));
+
+    const left = words.filter(w => !bank.words[normWord(w.en)]).length;
+    // a word Claude returned nothing usable for would loop forever - report it
+    const stuck = left === missing.length;
+    return json({ words: bank.words, remaining: left, ready: left === 0, stuck });
+  }
+
+  /* Grade a sentence she wrote herself. */
+  if (path === 'sentence-check' && method === 'POST') {
+    if (!user) return json({ error: 'not logged in' }, 401);
+    const { word, sentence } = await request.json().catch(() => ({}));
+    if (!word || !sentence) return json({ error: 'missing word or sentence' }, 400);
+    if (String(sentence).length > 300 || String(word).length > 60) {
+      return json({ error: 'too long' }, 413);
+    }
+    if (!env.ANTHROPIC_API_KEY) return json({ error: 'checking is not configured' }, 503);
+    if (!await withinBudget(env, user, 1)) return json({ error: 'daily limit reached' }, 429);
+
+    try {
+      const out = await askClaude(env, {
+        system: CHECK_SYSTEM,
+        prompt: `Target word: ${word}\nHer sentence: ${sentence}`,
+        schema: CHECK_SCHEMA,
+      });
+      return json({
+        verdict: ['great', 'almost', 'try_again'].includes(out.verdict) ? out.verdict : 'almost',
+        feedback: String(out.feedback || ''),
+        correction: String(out.correction || ''),
+      });
+    } catch (e) {
+      return json({ error: 'check failed', detail: String(e && e.message || e) }, 502);
     }
   }
 

@@ -616,14 +616,17 @@ function startPractice(mode, words) {
 
 document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
+    const mode = btn.dataset.mode;
+    if (mode === 'fill' || mode === 'write') return startSentenceMode(mode);
     const list = getList(currentListId);
-    startPractice(btn.dataset.mode, list.words);
+    startPractice(mode, list.words);
   });
 });
 
 const questionWordEl = document.getElementById('question-word');
 const answerInput = document.getElementById('answer-input');
 const btnSpeak = document.getElementById('btn-speak');
+const sentenceInput = document.getElementById('sentence-input');
 const btnCheck = document.getElementById('btn-check');
 const btnNext = document.getElementById('btn-next');
 const feedbackEl = document.getElementById('feedback');
@@ -633,6 +636,7 @@ function showQuestion() {
   const word = queue[index];
   practice.firstTry = true;
   practice.answered = false;
+  practice.checking = false;
 
   document.getElementById('progress-fill').style.width = (index / queue.length * 100) + '%';
   document.getElementById('practice-counter').textContent = `מילה ${index + 1} מתוך ${queue.length}`;
@@ -640,9 +644,16 @@ function showQuestion() {
   feedbackEl.hidden = true;
   btnNext.hidden = true;
   btnCheck.hidden = false;
+  btnCheck.textContent = 'בדיקה ✔';
+  btnCheck.disabled = false;
   answerInput.value = '';
   answerInput.disabled = false;
   answerInput.className = '';
+  answerInput.hidden = mode === 'write';
+  sentenceInput.hidden = mode !== 'write';
+  sentenceInput.value = '';
+  sentenceInput.disabled = false;
+  sentenceInput.className = 'en';
 
   if (mode === 'he2en') {
     questionWordEl.textContent = word.he;
@@ -655,6 +666,21 @@ function showQuestion() {
     questionWordEl.className = 'question-word en';
     btnSpeak.hidden = true;
     answerInput.placeholder = 'כתבי בעברית...';
+  } else if (mode === 'fill') {
+    // the sentence, with the gap she has to fill
+    questionWordEl.innerHTML =
+      `<span class="sentence">${escapeHtml(word.sentence).replace('___', '<span class="blank">?</span>')}</span>`;
+    questionWordEl.className = 'question-word';
+    btnSpeak.hidden = true;
+    answerInput.classList.add('en');
+    answerInput.placeholder = 'איזו מילה חסרה?';
+  } else if (mode === 'write') {
+    questionWordEl.innerHTML =
+      `<span class="write-prompt">כתבי משפט באנגלית עם המילה</span>
+       <span class="en">${escapeHtml(word.en)}</span>
+       <span class="write-he">(${escapeHtml(word.he)})</span>`;
+    questionWordEl.className = 'question-word';
+    btnSpeak.hidden = true;
   } else { // listen
     questionWordEl.textContent = '🎧';
     questionWordEl.className = 'question-word';
@@ -663,7 +689,7 @@ function showQuestion() {
     answerInput.placeholder = 'כתבי מה ששמעת...';
     speak(word.en);
   }
-  answerInput.focus();
+  (mode === 'write' ? sentenceInput : answerInput).focus();
 }
 
 btnSpeak.addEventListener('click', () => {
@@ -711,9 +737,18 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+/* the word counts as a mistake once, however many tries it takes */
+function markWrong(word) {
+  if (practice.firstTry) {
+    practice.firstTry = false;
+    practice.wrong.push(word);
+  }
+}
+
 function checkAnswer() {
   // once the word is right we're done with it - re-checking must never score again
   if (practice.answered) return;
+  if (practice.mode === 'write') return checkWrittenSentence();
 
   const { mode, queue, index } = practice;
   const word = queue[index];
@@ -721,7 +756,9 @@ function checkAnswer() {
   if (!answer.trim()) { answerInput.focus(); return; }
 
   const expectEn = mode !== 'en2he';
-  const stored = expectEn ? word.en : word.he;
+  // filling a gap: any word from the list that fits the sentence is right
+  const stored = mode === 'fill' ? word.accept.join(',') : expectEn ? word.en : word.he;
+  const reveal = mode === 'fill' ? word.en : stored;
   const norm = expectEn ? normEn : normHe;
   const ok = matches(answer, stored, norm);
 
@@ -743,18 +780,17 @@ function checkAnswer() {
     answerInput.classList.add('correct');
     answerInput.disabled = true;
     btnCheck.hidden = true;
+    // hearing the whole sentence with the word in place is half the lesson
+    if (mode === 'fill') speak(word.sentence.replace('___', answer.trim()));
     btnNext.focus();
     return;
   }
 
   // wrong - the word counts as a mistake once, but she can keep trying
-  if (practice.firstTry) {
-    practice.firstTry = false;
-    practice.wrong.push(word);
-  }
+  markWrong(word);
 
-  const dist = minDistance(answer, stored, norm);
-  const mainLen = norm(stored.split(/[,/]/)[0]).length;
+  const dist = minDistance(answer, mode === 'fill' ? reveal : stored, norm);
+  const mainLen = norm((mode === 'fill' ? reveal : stored).split(/[,/]/)[0]).length;
   const minor = dist === 1 || (dist === 2 && mainLen >= 6);
 
   answerInput.classList.remove('wrong', 'almost');
@@ -767,7 +803,7 @@ function checkAnswer() {
     answerInput.classList.add('wrong');
     feedbackEl.className = 'feedback bad';
     feedbackEl.innerHTML = `${pick(encourage)}
-      <span class="correct-answer">${escapeHtml(stored)}</span>`;
+      <span class="correct-answer">${escapeHtml(reveal)}</span>`;
     const card = document.getElementById('question-card');
     card.classList.remove('flash-wrong');
     void card.offsetWidth;
@@ -803,6 +839,223 @@ function nextQuestion() {
   } else {
     showQuestion();
   }
+}
+
+/* ---------- "Write your own sentence" ----------
+   The only exercise a computer can't mark on its own: whether a sentence is
+   real English and uses the word for what it means. Cheap local checks run
+   first so an obvious miss never costs a round trip. */
+
+/* did she actually use the word? tokenising beats a regex here: it needs no
+   escaping, and it will not match "cat" inside "cattle" */
+function usesWord(sentence, word) {
+  const w = normEn(word);
+  const text = normEn(sentence);
+  if (w.includes(' ')) return text.includes(w);
+  return text.split(/[^a-z']+/).includes(w);
+}
+
+async function checkWrittenSentence() {
+  const word = practice.queue[practice.index];
+  const text = sentenceInput.value.trim();
+  if (!text) { sentenceInput.focus(); return; }
+  if (practice.checking) return;
+
+  feedbackEl.hidden = false;
+  btnNext.hidden = false;
+
+  // she has to actually use the word - no need to ask the server about that
+  if (!usesWord(text, word.en)) {
+    markWrong(word);
+    feedbackEl.className = 'feedback bad';
+    feedbackEl.innerHTML = `צריך להשתמש במילה
+      <span class="correct-answer">${escapeHtml(word.en)}</span> בתוך המשפט 🙂`;
+    sentenceInput.classList.add('wrong');
+    sentenceInput.focus();
+    return;
+  }
+
+  practice.checking = true;
+  btnCheck.disabled = true;
+  btnCheck.textContent = 'בודקים... ⏳';
+  feedbackEl.className = 'feedback';
+  feedbackEl.textContent = 'קוראים את המשפט שלך... 👀';
+
+  let res = null;
+  try {
+    const r = await fetch('api/sentence-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word: word.en, sentence: text }),
+    });
+    if (r.ok) res = await r.json();
+  } catch {}
+
+  practice.checking = false;
+  btnCheck.disabled = false;
+  btnCheck.textContent = 'בדיקה ✔';
+
+  // couldn't reach the marker: don't score it either way, just let her carry on
+  if (!res || !res.verdict) {
+    feedbackEl.className = 'feedback almost';
+    feedbackEl.textContent = 'לא הצלחנו לבדוק את המשפט עכשיו 😕 אפשר להמשיך הלאה';
+    return;
+  }
+
+  const correction = res.correction && normEn(res.correction) !== normEn(text)
+    ? `<span class="correction">${escapeHtml(res.correction)}</span>` : '';
+
+  if (res.verdict === 'great') {
+    practice.answered = true;
+    if (practice.firstTry) {
+      practice.correctCount++;
+      burstConfetti(12);
+    } else {
+      burstConfetti(6);
+    }
+    feedbackEl.className = 'feedback good';
+    feedbackEl.innerHTML = `${escapeHtml(res.feedback || pick(praise))}`;
+    sentenceInput.classList.remove('wrong', 'almost');
+    sentenceInput.classList.add('correct');
+    sentenceInput.disabled = true;
+    btnCheck.hidden = true;
+    btnNext.focus();
+    return;
+  }
+
+  markWrong(word);
+  const almost = res.verdict === 'almost';
+  sentenceInput.classList.remove('wrong', 'almost');
+  void sentenceInput.offsetWidth; // restart the shake
+  sentenceInput.classList.add(almost ? 'almost' : 'wrong');
+  feedbackEl.className = almost ? 'feedback almost' : 'feedback bad';
+  feedbackEl.innerHTML = escapeHtml(res.feedback || '') + correction;
+  sentenceInput.focus();
+}
+
+sentenceInput.addEventListener('keydown', e => {
+  // Enter sends the sentence; Shift+Enter is a new line
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!sentenceInput.disabled) checkAnswer();
+  }
+});
+
+/* ---------- Sentence bank ----------
+   Sentences for a list are written once by the server and then frozen. We keep
+   a copy in localStorage so a round plays fine with no network, and so the same
+   sentence doesn't come round again until the others have had their turn. */
+
+const bankCache = {};
+
+function loadBankLocal(listId) {
+  try { return JSON.parse(localStorage.getItem('bank:' + listId)) || null; } catch { return null; }
+}
+function saveBankLocal(listId, words) {
+  try { localStorage.setItem('bank:' + listId, JSON.stringify(words)); } catch {}
+}
+
+const prepOverlay = document.getElementById('prep-overlay');
+const prepMsg = document.getElementById('prep-msg');
+const prepFill = document.getElementById('prep-fill');
+let prepCancelled = false;
+
+document.getElementById('prep-cancel').addEventListener('click', () => {
+  prepCancelled = true;
+  prepOverlay.hidden = true;
+});
+
+function showPrep(done, total) {
+  prepOverlay.hidden = false;
+  prepMsg.textContent = total
+    ? `מכינים משפטים לרשימה... ${done} מתוך ${total} מילים`
+    : 'מכינים משפטים לרשימה...';
+  prepFill.style.width = total ? (done / total * 100) + '%' : '5%';
+}
+
+/* Fetch what exists, then ask the server to write the missing words in small
+   batches. `quiet` runs it in the background with no overlay. */
+async function ensureSentences(listId, { quiet = false } = {}) {
+  const r = await fetch('api/sentences?listId=' + encodeURIComponent(listId));
+  if (!r.ok) throw new Error(r.status === 503 ? 'unconfigured' : 'offline');
+  let state = await r.json();
+  const total = Object.keys(state.words).length + state.remaining;
+
+  prepCancelled = false;
+  while (!state.ready) {
+    if (prepCancelled) break;
+    if (!quiet) showPrep(Object.keys(state.words).length, total);
+    const res = await fetch('api/sentences', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listId }),
+    });
+    if (!res.ok) { if (!quiet) prepOverlay.hidden = true; throw new Error('generation failed'); }
+    const next = await res.json();
+    // no progress at all means the server can't do these words - don't spin
+    if (next.stuck) { state = next; break; }
+    state = next;
+  }
+  if (!quiet) prepOverlay.hidden = true;
+  bankCache[listId] = state.words;
+  saveBankLocal(listId, state.words);
+  return state.words;
+}
+
+/* The sentences for a word, in a rotation that doesn't repeat until they've
+   all been used. */
+function pickSentence(listId, key, sentences) {
+  const seenKey = `seen:${listId}:${key}`;
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem(seenKey)) || []; } catch {}
+  if (seen.length >= sentences.length) seen = [];
+  const fresh = sentences.map((s, i) => i).filter(i => !seen.includes(i));
+  const pick = fresh[Math.floor(Math.random() * fresh.length)];
+  try { localStorage.setItem(seenKey, JSON.stringify([...seen, pick])); } catch {}
+  return sentences[pick];
+}
+
+/* Build a practice queue of words that have a sentence ready. */
+function sentenceQueue(listId, words, bank) {
+  return words
+    .map(w => {
+      const entry = bank[normEn(w.en)];
+      if (!entry || !entry.sentences || !entry.sentences.length) return null;
+      const sentence = pickSentence(listId, normEn(w.en), entry.sentences);
+      return { ...w, sentence: sentence.text, accept: sentence.accept };
+    })
+    .filter(Boolean);
+}
+
+async function startSentenceMode(mode) {
+  const list = getList(currentListId);
+  if (!list) return;
+  if (mode === 'write') {
+    // nothing to prepare - but it does need the server, so say so up front
+    startPractice('write', list.words);
+    return;
+  }
+  let bank = bankCache[currentListId] || loadBankLocal(currentListId);
+  const missing = !bank || list.words.some(w => !bank[normEn(w.en)]);
+  if (missing) {
+    try {
+      bank = await ensureSentences(currentListId);
+    } catch (e) {
+      if (!bank) {
+        showAlert(e.message === 'unconfigured'
+          ? 'המשפטים עוד לא מוכנים 😕 חסרה הגדרה בשרת'
+          : 'לא הצלחנו להכין משפטים עכשיו 😕 אפשר לנסות שוב מאוחר יותר');
+        return;
+      }
+    }
+  }
+  const queue = sentenceQueue(currentListId, list.words, bank || {});
+  if (!queue.length) {
+    showAlert('אין עדיין משפטים לרשימה הזאת 😕');
+    return;
+  }
+  startPractice('fill', queue);
 }
 
 /* ---------- Summary ---------- */

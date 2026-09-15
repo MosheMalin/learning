@@ -367,6 +367,82 @@ input:focus { outline: none; border-color: var(--purple); }
 }
 .date-display { font-weight: 700; color: var(--purple-dark); }
 
+/* ===== Sentence exercises ===== */
+.question-word .sentence {
+  display: block;
+  font-family: "Segoe UI", Arial, sans-serif;
+  direction: ltr;
+  font-size: 1.35rem;
+  line-height: 1.7;
+  font-weight: 600;
+}
+.question-word .blank {
+  display: inline-block;
+  min-width: 68px;
+  margin: 0 4px;
+  padding: 0 6px;
+  border-bottom: 4px solid var(--purple);
+  border-radius: 4px;
+  background: #f5f0ff;
+  color: var(--purple);
+  font-weight: 800;
+}
+.question-word .write-prompt {
+  display: block;
+  font-size: 1.05rem;
+  color: var(--ink);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.question-word .write-he { font-size: 1rem; color: #9b8bbf; font-weight: 600; }
+/* English inside a Hebrew line: isolate it so punctuation stays put */
+.question-word .en {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-size: 1.7rem;
+  font-weight: 800;
+  color: var(--purple-dark);
+}
+
+#sentence-input {
+  direction: ltr;
+  text-align: left;
+  width: 100%;
+  padding: 14px;
+  font-size: 1.15rem;
+  border: 3px solid var(--pink-light);
+  border-radius: var(--radius);
+  font-family: "Segoe UI", Arial, sans-serif;
+  resize: vertical;
+  margin: 10px 0;
+}
+#sentence-input:focus { outline: none; border-color: var(--purple); }
+#sentence-input.correct { border-color: var(--green); background: #f0fdf9; }
+#sentence-input.almost { border-color: var(--yellow); animation: shake .4s; }
+#sentence-input.wrong { border-color: var(--red); animation: shake .4s; }
+
+.feedback .correction {
+  display: block;
+  direction: ltr;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: #fff;
+  color: var(--purple-dark);
+  font-weight: 700;
+}
+
+/* ===== Preparing a list's sentences ===== */
+.prep-emoji { font-size: 2.6rem; }
+#prep-fill {
+  height: 100%;
+  width: 5%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--purple), var(--pink));
+  transition: width .4s ease;
+}
+.prep-note { font-size: .85rem; color: #9b8bbf; margin: 10px 0 0; }
+
 /* ===== Hebrew calendar picker ===== */
 .cal-overlay {
   position: fixed;

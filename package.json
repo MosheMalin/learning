@@ -9,5 +9,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0"
   }
 }

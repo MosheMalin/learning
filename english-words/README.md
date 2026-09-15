@@ -5,17 +5,60 @@ A web app for practicing weekly English word lists: spelling and translation, fo
 ## Features
 
 - **Word lists**: add a weekly list of English↔Hebrew word pairs, with a list name and exam date. Lists with an exam in the next 7 days show a countdown badge.
-- **Three practice modes**:
+- **Five practice modes**:
   - עברית → אנגלית — see the Hebrew word, type the English spelling
   - אנגלית → עברית — see the English word, type the Hebrew translation
   - הכתבה בשמיעה — hear the English word (browser text-to-speech) and type its spelling
+  - להשלים משפט — a sentence with the word missing; she fills the gap
+  - לכתוב משפט — she writes her own sentence using the word, and gets feedback on it
 - **Forgiving checking**: English is case-insensitive; Hebrew ignores final-letter forms (ם/מ) and nikud. A stored answer can list alternatives separated by `/` or `,` (e.g. `חבר / חברה`) and any one of them is accepted.
 - **After each round**: stars, confetti, a review table of mistakes, and a "practice only the mistakes" button.
 - **Backup / restore**: data lives in the browser's localStorage (per device, per browser). The 💾 button downloads a JSON backup; 📂 restores/merges it — useful for moving between devices.
 
+## The sentence exercises
+
+The two sentence modes are the only part of the app that needs Claude, and they
+use it in the two places a computer genuinely cannot manage alone.
+
+**להשלים משפט** — ten sentences are written for every word in a list, once, the
+first time the mode is opened (a progress card shows it happening). They are then
+frozen in KV and cached in the browser, so practice itself never calls out: the
+round plays the same offline, costs nothing to repeat, and a word keeps the
+sentences it was given. Ten per word means she meets a different one each time
+instead of memorising the sentence along with the word. Each sentence also stores
+every other word from her list that would fit the gap, so a sensible answer isn't
+marked wrong just because it wasn't the one intended. Marking is local and exact -
+the same forgiving comparison the other modes use.
+
+**לכתוב משפט** — the app checks locally that she used the word at all (a miss
+there never costs a request), then asks Claude whether the sentence is real
+English used with the word's real meaning, and gets back a short Hebrew note and
+a corrected version. There is no deterministic way to judge that, and the check
+is deliberately generous - a short correct sentence is a great sentence. If the
+check can't be reached, the sentence is neither scored nor counted as a mistake.
+
+### Setting it up
+
+Both routes need an Anthropic API key, as a Cloudflare secret (never in the
+client, never in the repo):
+
+```
+npx wrangler pages secret put ANTHROPIC_API_KEY --project-name english-words
+```
+
+Without it the app keeps working exactly as before and the two sentence modes say
+they aren't ready. Usage is capped per user per day (`DAILY_CALL_BUDGET`) so a
+stuck client can't run up a bill. Generating a whole weekly list costs a few
+cents; a marked sentence is well under one.
+
+Locally, `serve.py` answers both routes with obviously-fake canned sentences, so
+the exercises can be worked on without a key.
+
 ## Tech
 
-Plain HTML/CSS/JS, no build step, no dependencies, no backend. Voice uses the browser's built-in Web Speech API (`speechSynthesis`) — free, works offline; Edge and Chrome on Windows have good English voices.
+Plain HTML/CSS/JS in the browser, no build step. Sign-in, storage and the two
+sentence routes are Cloudflare Pages Functions backed by KV; the sentence routes
+call Claude (`@anthropic-ai/sdk`), which is the project's only dependency. Voice uses the browser's built-in Web Speech API (`speechSynthesis`) — free, works offline; Edge and Chrome on Windows have good English voices.
 
 ## Run locally
 

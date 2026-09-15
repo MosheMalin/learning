@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>המילים שלי ✨ תרגול אנגלית</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦄</text></svg>">
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
 
@@ -88,6 +88,16 @@
         <span class="mode-name">הכתבה בשמיעה</span>
         <span class="mode-desc">שומעים את המילה וכותבים אותה באנגלית</span>
       </button>
+      <button class="mode-btn" data-mode="fill">
+        <span class="mode-emoji">🧩</span>
+        <span class="mode-name">להשלים משפט</span>
+        <span class="mode-desc">משפט עם מילה חסרה - וממלאים אותה</span>
+      </button>
+      <button class="mode-btn" data-mode="write">
+        <span class="mode-emoji">✍️</span>
+        <span class="mode-name">לכתוב משפט</span>
+        <span class="mode-desc">כותבים משפט משלכם עם המילה</span>
+      </button>
     </div>
     <div id="word-table-wrap">
       <h3 class="words-heading">המילים ברשימה</h3>
@@ -116,6 +126,7 @@
       <div id="question-word" class="question-word"></div>
       <button id="btn-speak" class="speak-btn" hidden>🔊 להשמיע שוב</button>
       <input type="text" id="answer-input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="כתבי את התשובה כאן...">
+      <textarea id="sentence-input" class="en" rows="2" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Write your sentence here..." hidden></textarea>
       <button id="btn-check" class="big-btn primary">בדיקה ✔</button>
       <div id="feedback" class="feedback" hidden></div>
       <button id="btn-next" class="big-btn primary" hidden>הבאה ⬅</button>
@@ -155,6 +166,17 @@
   </div>
 </div>
 
+<!-- preparing the sentence bank for a list (first time only) -->
+<div id="prep-overlay" class="cal-overlay" hidden>
+  <div class="modal-card">
+    <div class="prep-emoji">🧩</div>
+    <p id="prep-msg">מכינים משפטים לרשימה...</p>
+    <div class="progress-track"><div id="prep-fill"></div></div>
+    <p class="prep-note">זה קורה רק פעם אחת לכל רשימה ✨</p>
+    <button id="prep-cancel" class="tiny-btn">ביטול</button>
+  </div>
+</div>
+
 <!-- keyboard language magic toggle -->
 <button id="kbd-magic" title="כשזה פועל, האותיות יוצאות תמיד בשפה הנכונה - בלי להחליף שפה במקלדת"></button>
 
@@ -170,6 +192,6 @@
 </div>
 
 <div id="confetti-layer"></div>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
