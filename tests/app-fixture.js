@@ -50,7 +50,12 @@ const test = base.extend({
       const { word, sentence } = r.request().postDataJSON();
       const verdict = !sentence.includes(word) ? 'try_again'
         : /^[A-Z].*[.!?]$/.test(sentence.trim()) ? 'great' : 'almost';
-      await r.fulfill({ json: { verdict, feedback: 'משוב לבדיקה', correction: 'I have a ' + word + '.' } });
+      await r.fulfill({ json: {
+        verdict,
+        word_ok: sentence.includes(word),   // the tested word, judged on its own
+        feedback: 'משוב לבדיקה',
+        correction: 'I have a ' + word + '.',
+      } });
     });
 
     await page.goto('/index.html');

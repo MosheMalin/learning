@@ -1029,26 +1029,28 @@ async function checkWrittenSentence() {
   const correction = res.correction && normEn(res.correction) !== normEn(text)
     ? `<span class="correction">${escapeHtml(res.correction)}</span>` : '';
 
-  // She is tested on her word. A slip somewhere else in the sentence is worth
-  // showing her, but it is not what the round is scoring, and it should never
-  // send the word back to "practise the mistakes".
-  if (res.verdict !== 'great' && res.word_ok) {
-    practice.answered = true;
-    practice.written[index] = text;
-    if (practice.firstTry) practice.correctCount++;
-    burstConfetti(8);
-    feedbackEl.className = 'feedback good';
-    feedbackEl.innerHTML = escapeHtml(res.feedback || '') + correction;
+  // Three outcomes, and the word she is tested on decides which:
+  //   the word is wrong          -> red, and it goes to "practise the mistakes"
+  //   the word is right, sentence isn't finished or has a slip
+  //                              -> yellow: worth fixing, but not a word she failed
+  //   both right                 -> green
+  // an older or partial answer without the flag is read the way the server
+  // defaults it: the word was fine
+  const wordOk = res.word_ok !== false;
+
+  if (wordOk && res.verdict !== 'great') {
+    // not a mistake against her word list, so it never reaches practice.wrong -
+    // but it isn't finished either, and she can put it right and turn it green
     sentenceInput.classList.remove('wrong', 'almost');
-    sentenceInput.classList.add('correct');
-    sentenceInput.disabled = true;
-    btnCheck.hidden = true;
-    setProgress((index + 1) / practice.queue.length);
-    btnNext.focus();
+    void sentenceInput.offsetWidth;
+    sentenceInput.classList.add('almost');
+    feedbackEl.className = 'feedback almost';
+    feedbackEl.innerHTML = escapeHtml(res.feedback || '') + correction;
+    sentenceInput.focus();
     return;
   }
 
-  if (res.verdict === 'great') {
+  if (wordOk && res.verdict === 'great') {
     practice.answered = true;
     practice.written[index] = text;
     setProgress((index + 1) / queue.length);
@@ -1068,12 +1070,12 @@ async function checkWrittenSentence() {
     return;
   }
 
+  // the word itself is wrong, missing or misspelled: this is the one that counts
   markWrong(word);
-  const almost = res.verdict === 'almost';
   sentenceInput.classList.remove('wrong', 'almost');
   void sentenceInput.offsetWidth; // restart the shake
-  sentenceInput.classList.add(almost ? 'almost' : 'wrong');
-  feedbackEl.className = almost ? 'feedback almost' : 'feedback bad';
+  sentenceInput.classList.add('wrong');
+  feedbackEl.className = 'feedback bad';
   feedbackEl.innerHTML = escapeHtml(res.feedback || '') + correction;
   sentenceInput.focus();
 }

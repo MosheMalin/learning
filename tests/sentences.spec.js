@@ -85,19 +85,20 @@ test('a sentence without the target word never reaches the server', async ({ app
   expect(await score(app)).toMatchObject({ correct: 0, wrong: 1 });
 });
 
-test('a good sentence scores, a sloppy one does not', async ({ app }) => {
+test('a sloppy sentence is yellow and costs her nothing; fixing it scores', async ({ app }) => {
   await startWrite(app);
   const word = await current(app);
   await app.fill('#sentence-input', 'i have a ' + word.en); // no capital, no full stop
   await app.click('#btn-check');
   await expect(app.locator('#feedback')).toHaveClass(/almost/);
-  expect(await score(app)).toMatchObject({ correct: 0, wrong: 1 });
+  // her word was right, so this is something to tidy up - not a failed word
+  expect(await score(app)).toMatchObject({ correct: 0, wrong: 0 });
 
   await app.fill('#sentence-input', 'I have a ' + word.en + '.');
   await app.click('#btn-check');
   await expect(app.locator('#feedback')).toHaveClass(/good/);
   await expect(app.locator('#btn-check')).toBeHidden();
-  expect(await score(app)).toMatchObject({ correct: 0 }); // right, but not first try
+  expect(await score(app)).toMatchObject({ correct: 1, wrong: 0 });
 });
 
 test('the marker cannot be asked twice about the same sentence', async ({ app }) => {
@@ -178,18 +179,45 @@ test('a word not on her list never reaches the server', async ({ app }) => {
 
 /* ---------- a slip outside the test word ---------- */
 
-test('a mistake elsewhere in the sentence still scores the word', async ({ app }) => {
+test('her word right but the sentence unfinished is yellow, not green', async ({ app }) => {
+  // "My father is" - the word is right, the sentence is not a sentence yet
   await app.route('**/api/sentence-check', r => r.fulfill({
-    json: { verdict: 'almost', word_ok: true, feedback: 'המילה נכונה!', correction: 'I have a dog.' },
+    json: { verdict: 'almost', word_ok: true, feedback: 'המילה נכונה! המשפט לא נגמר', correction: 'My father is nice.' },
   }));
   await app.click('.mode-btn[data-mode="write"]');
   await app.waitForSelector('#screen-practice:not([hidden])');
   const word = await app.evaluate(() => practice.queue[practice.index].en);
 
-  await app.fill('#sentence-input', 'i have a ' + word);
+  await app.fill('#sentence-input', 'My ' + word + ' is');
+  await app.click('#btn-check');
+  await expect(app.locator('#feedback')).toHaveClass(/almost/);
+  // not a win, but not a word she failed either
+  expect(await score(app)).toMatchObject({ correct: 0, wrong: 0 });
+  // and she can put it right without leaving the word
+  await expect(app.locator('#btn-check')).toBeVisible();
+  await expect(app.locator('#sentence-input')).toBeEnabled();
+});
+
+test('fixing a yellow sentence turns it green and scores', async ({ app }) => {
+  let strict = true;
+  await app.route('**/api/sentence-check', r => r.fulfill({
+    json: strict
+      ? { verdict: 'almost', word_ok: true, feedback: 'המשפט לא נגמר', correction: '' }
+      : { verdict: 'great', word_ok: true, feedback: 'יופי!', correction: '' },
+  }));
+  await app.click('.mode-btn[data-mode="write"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  const word = await app.evaluate(() => practice.queue[practice.index].en);
+
+  await app.fill('#sentence-input', 'My ' + word + ' is');
+  await app.click('#btn-check');
+  await expect(app.locator('#feedback')).toHaveClass(/almost/);
+
+  strict = false;
+  await app.fill('#sentence-input', 'My ' + word + ' is nice.');
   await app.click('#btn-check');
   await expect(app.locator('#feedback')).toHaveClass(/good/);
-  // scored, and never sent to "practise the mistakes"
+  // a yellow attempt was never a mistake, so the word still counts
   expect(await score(app)).toMatchObject({ correct: 1, wrong: 0 });
 });
 
