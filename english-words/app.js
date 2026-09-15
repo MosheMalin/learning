@@ -609,6 +609,8 @@ function startPractice(mode, words) {
     index: 0,
     correctCount: 0,
     wrong: [],
+    written: [],   // what she wrote, per question, for the summary
+    state: [],     // per question, so she can step back and see it again
   };
   show('practice');
   showQuestion();
@@ -629,32 +631,15 @@ const btnSpeak = document.getElementById('btn-speak');
 const sentenceInput = document.getElementById('sentence-input');
 const btnCheck = document.getElementById('btn-check');
 const btnNext = document.getElementById('btn-next');
+const btnPrev = document.getElementById('btn-prev');
 const feedbackEl = document.getElementById('feedback');
 
-function showQuestion() {
-  const { mode, queue, index } = practice;
-  const word = queue[index];
-  practice.firstTry = true;
-  practice.answered = false;
-  practice.checking = false;
+function setProgress(fraction) {
+  document.getElementById('progress-fill').style.width = (fraction * 100) + '%';
+}
 
-  document.getElementById('progress-fill').style.width = (index / queue.length * 100) + '%';
-  document.getElementById('practice-counter').textContent = `מילה ${index + 1} מתוך ${queue.length}`;
-
-  feedbackEl.hidden = true;
-  btnNext.hidden = true;
-  btnCheck.hidden = false;
-  btnCheck.textContent = 'בדיקה ✔';
-  btnCheck.disabled = false;
-  answerInput.value = '';
-  answerInput.disabled = false;
-  answerInput.className = '';
-  answerInput.hidden = mode === 'write';
-  sentenceInput.hidden = mode !== 'write';
-  sentenceInput.value = '';
-  sentenceInput.disabled = false;
-  sentenceInput.className = 'en';
-
+/* Draws the question itself. Shared by a fresh question and a revisited one. */
+function renderQuestionBody(mode, word, { speakIt = true } = {}) {
   if (mode === 'he2en') {
     questionWordEl.textContent = word.he;
     questionWordEl.className = 'question-word';
@@ -687,10 +672,106 @@ function showQuestion() {
     btnSpeak.hidden = false;
     answerInput.classList.add('en');
     answerInput.placeholder = 'כתבי מה ששמעת...';
-    speak(word.en);
+    if (speakIt) speak(word.en);
   }
-  (mode === 'write' ? sentenceInput : answerInput).focus();
 }
+
+function showQuestion() {
+  const { mode, queue, index } = practice;
+  practice.firstTry = true;
+  practice.answered = false;
+  practice.checking = false;
+
+  setProgress(index / queue.length);
+  document.getElementById('practice-counter').textContent = `מילה ${index + 1} מתוך ${queue.length}`;
+
+  feedbackEl.hidden = true;
+  btnNext.hidden = true;
+  btnCheck.hidden = false;
+  btnCheck.textContent = 'בדיקה ✔';
+  btnCheck.disabled = false;
+  answerInput.value = '';
+  answerInput.disabled = false;
+  answerInput.className = '';
+  answerInput.hidden = mode === 'write';
+  sentenceInput.hidden = mode !== 'write';
+  sentenceInput.value = '';
+  sentenceInput.disabled = false;
+  sentenceInput.className = 'en';
+
+  renderQuestionBody(mode, queue[index]);
+  (mode === 'write' ? sentenceInput : answerInput).focus();
+  updateNav();
+}
+
+/* ---------- Going back and forth through a round ----------
+   She can step back to a word she has already done and see what she wrote and
+   what she was told. A revisited word is never scored again: whatever happened
+   the first time stands. */
+
+function currentInput() {
+  return practice.mode === 'write' ? sentenceInput : answerInput;
+}
+
+/* remember how this question looks before we leave it */
+function snapshot() {
+  const input = currentInput();
+  practice.state[practice.index] = {
+    answer: input.value,
+    inputClass: input.className,
+    feedbackHtml: feedbackEl.innerHTML,
+    feedbackClass: feedbackEl.className,
+    feedbackHidden: feedbackEl.hidden,
+    done: practice.answered,
+    firstTry: practice.firstTry,
+  };
+}
+
+function goTo(index) {
+  const { mode, queue } = practice;
+  practice.index = index;
+  const saved = practice.state[index];
+  if (!saved) return showQuestion();   // never seen: a fresh question
+
+  practice.checking = false;
+  setProgress((saved.done ? index + 1 : index) / queue.length);
+  document.getElementById('practice-counter').textContent = `מילה ${index + 1} מתוך ${queue.length}`;
+
+  answerInput.hidden = mode === 'write';
+  sentenceInput.hidden = mode !== 'write';
+  // going back must not replay the audio of a listening round unasked
+  renderQuestionBody(mode, queue[index], { speakIt: false });
+
+  const input = currentInput();
+  input.value = saved.answer;
+  input.className = saved.inputClass;
+  input.disabled = saved.done;
+  feedbackEl.innerHTML = saved.feedbackHtml;
+  feedbackEl.className = saved.feedbackClass;
+  feedbackEl.hidden = saved.feedbackHidden;
+
+  practice.answered = saved.done;      // a finished word can't be scored again
+  practice.firstTry = saved.firstTry;
+  btnCheck.hidden = saved.done;
+  btnCheck.disabled = false;
+  btnCheck.textContent = 'בדיקה ✔';
+  // "next" is offered once the word has been answered or attempted - coming
+  // back to a word she never touched must not let her skip past it
+  btnNext.hidden = !saved.done && saved.feedbackHidden;
+  if (!saved.done) input.focus();
+  updateNav();
+}
+
+function updateNav() {
+  // only offer "back" once there is something behind us to look at
+  btnPrev.hidden = practice.index === 0 || !practice.state[practice.index - 1];
+}
+
+btnPrev.addEventListener('click', () => {
+  if (practice.index === 0) return;
+  snapshot();
+  goTo(practice.index - 1);
+});
 
 btnSpeak.addEventListener('click', () => {
   speak(practice.queue[practice.index].en);
@@ -745,9 +826,30 @@ function markWrong(word) {
   }
 }
 
-function checkAnswer() {
+/* Another word from her own list, that this sentence doesn't already accept.
+   "My ___ wakes me up each morning" was written for "clock", but "father" is
+   a perfectly good answer - and the sentence has no way of knowing. */
+function otherListWord(answer) {
+  const typed = normEn(answer);
+  const list = getList(practice.listId);
+  const match = (list ? list.words : []).find(w => normEn(w.en) === typed);
+  return match ? match.en : null;
+}
+
+async function sentenceFits(sentence, word) {
+  try {
+    const r = await fetch('api/sentence-fits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listId: practice.listId, sentence, word }),
+    });
+    return r.ok && (await r.json()).fits === true;
+  } catch { return false; }
+}
+
+async function checkAnswer() {
   // once the word is right we're done with it - re-checking must never score again
-  if (practice.answered) return;
+  if (practice.answered || practice.checking) return;
   if (practice.mode === 'write') return checkWrittenSentence();
 
   const { mode, queue, index } = practice;
@@ -760,7 +862,26 @@ function checkAnswer() {
   const stored = mode === 'fill' ? word.accept.join(',') : expectEn ? word.en : word.he;
   const reveal = mode === 'fill' ? word.en : stored;
   const norm = expectEn ? normEn : normHe;
-  const ok = matches(answer, stored, norm);
+  let ok = matches(answer, stored, norm);
+
+  // she answered with a different word off her list: it may be just as right
+  if (!ok && mode === 'fill') {
+    const alt = otherListWord(answer);
+    if (alt) {
+      practice.checking = true;
+      btnCheck.disabled = true;
+      btnCheck.textContent = 'בודקים... ⏳';
+      feedbackEl.hidden = false;
+      feedbackEl.className = 'feedback';
+      feedbackEl.textContent = 'רגע, בודקים אם גם זה מתאים... 🤔';
+      ok = await sentenceFits(word.sentence, alt);
+      practice.checking = false;
+      btnCheck.disabled = false;
+      btnCheck.textContent = 'בדיקה ✔';
+      // remember it here too, so the same round won't ask twice
+      if (ok) word.accept.push(alt);
+    }
+  }
 
   feedbackEl.hidden = false;
   btnNext.hidden = false;
@@ -776,6 +897,7 @@ function checkAnswer() {
       burstConfetti(6);
     }
     feedbackEl.className = 'feedback good';
+    setProgress((index + 1) / queue.length);
     answerInput.classList.remove('wrong', 'almost');
     answerInput.classList.add('correct');
     answerInput.disabled = true;
@@ -833,11 +955,12 @@ document.addEventListener('keydown', e => {
 
 function nextQuestion() {
   if (practice.index >= practice.queue.length) return; // round already finished
-  practice.index++;
-  if (practice.index >= practice.queue.length) {
+  snapshot();
+  if (practice.index + 1 >= practice.queue.length) {
+    practice.index++;
     showSummary();
   } else {
-    showQuestion();
+    goTo(practice.index + 1);
   }
 }
 
@@ -856,7 +979,8 @@ function usesWord(sentence, word) {
 }
 
 async function checkWrittenSentence() {
-  const word = practice.queue[practice.index];
+  const { index, queue } = practice;
+  const word = queue[index];
   const text = sentenceInput.value.trim();
   if (!text) { sentenceInput.focus(); return; }
   if (practice.checking) return;
@@ -905,8 +1029,29 @@ async function checkWrittenSentence() {
   const correction = res.correction && normEn(res.correction) !== normEn(text)
     ? `<span class="correction">${escapeHtml(res.correction)}</span>` : '';
 
+  // She is tested on her word. A slip somewhere else in the sentence is worth
+  // showing her, but it is not what the round is scoring, and it should never
+  // send the word back to "practise the mistakes".
+  if (res.verdict !== 'great' && res.word_ok) {
+    practice.answered = true;
+    practice.written[index] = text;
+    if (practice.firstTry) practice.correctCount++;
+    burstConfetti(8);
+    feedbackEl.className = 'feedback good';
+    feedbackEl.innerHTML = escapeHtml(res.feedback || '') + correction;
+    sentenceInput.classList.remove('wrong', 'almost');
+    sentenceInput.classList.add('correct');
+    sentenceInput.disabled = true;
+    btnCheck.hidden = true;
+    setProgress((index + 1) / practice.queue.length);
+    btnNext.focus();
+    return;
+  }
+
   if (res.verdict === 'great') {
     practice.answered = true;
+    practice.written[index] = text;
+    setProgress((index + 1) / queue.length);
     if (practice.firstTry) {
       practice.correctCount++;
       burstConfetti(12);
@@ -1085,6 +1230,21 @@ function showSummary() {
   }
   document.getElementById('summary-score').textContent = `ענית נכון על ${correct} מתוך ${total} מילים`;
 
+  // #6: after a writing round, show her what she wrote - it's the thing she made
+  const writtenEl = document.getElementById('summary-written');
+  const mine = (practice.written || [])
+    .map((text, i) => ({ text, word: practice.queue[i] }))
+    .filter(row => row.text);
+  if (practice.mode === 'write' && mine.length) {
+    writtenEl.innerHTML = '<h3>המשפטים שכתבת ✍️</h3>' + mine.map(row =>
+      `<div class="my-sentence">
+         <span class="my-word">${escapeHtml(row.word.en)}</span>
+         <span class="en">${escapeHtml(row.text)}</span>
+       </div>`).join('');
+  } else {
+    writtenEl.innerHTML = '';
+  }
+
   const mistakesEl = document.getElementById('summary-mistakes');
   if (practice.wrong.length > 0) {
     mistakesEl.innerHTML = '<h3>מילים לחזרה 📖</h3><table>' +
@@ -1101,7 +1261,15 @@ document.getElementById('btn-retry-wrong').addEventListener('click', () => {
   startPractice(practice.mode, practice.wrong);
 });
 document.getElementById('btn-practice-again').addEventListener('click', () => {
-  startPractice(practice.mode, getList(practice.listId).words);
+  const list = getList(practice.listId);
+  if (practice.mode === 'fill') {
+    // the raw word list carries no sentences - draw a fresh set from the bank
+    const bank = bankCache[practice.listId] || loadBankLocal(practice.listId) || {};
+    const queue = sentenceQueue(practice.listId, list.words, bank);
+    if (queue.length) return startPractice('fill', queue);
+    return showAlert('אין עדיין משפטים לרשימה הזאת 😕');
+  }
+  startPractice(practice.mode, list.words);
 });
 document.getElementById('btn-back-home').addEventListener('click', () => {
   currentListId = practice.listId;

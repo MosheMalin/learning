@@ -157,10 +157,11 @@ const CHECK_SCHEMA = {
   type: 'object',
   properties: {
     verdict: { type: 'string', enum: ['great', 'almost', 'try_again'] },
+    word_ok: { type: 'boolean' },
     feedback: { type: 'string' },
     correction: { type: 'string' },
   },
-  required: ['verdict', 'feedback', 'correction'],
+  required: ['verdict', 'word_ok', 'feedback', 'correction'],
   additionalProperties: false,
 };
 
@@ -172,7 +173,9 @@ const CHECK_SYSTEM = `A 10-year-old Israeli girl learning English (mother tongue
 
 Be generous and encouraging - this is a beginner writing a foreign language, not an exam. Never ask for longer or fancier sentences; a short correct sentence is a great sentence.
 
-"feedback": one or two short sentences in simple Hebrew, warm and specific. Name the single most useful thing to fix, and say what she did well. Do not use English grammar jargon.
+"word_ok": true when the target word itself is right - spelled correctly and used with its real meaning. It stays true when the rest of the sentence has a mistake. It is false only when the target word is missing, misspelled, or used to mean something it does not mean. This is the word she is tested on, so judge it on its own.
+
+"feedback": one or two short sentences in simple Hebrew, warm and specific. Name the single most useful thing to fix, and say what she did well. Do not use English grammar jargon. When "word_ok" is true, open by telling her the test word is right - a mistake elsewhere is worth mentioning, not worth worrying about.
 "correction": her sentence rewritten correctly in English, keeping her idea and her words as far as possible. If nothing needs fixing, repeat her sentence unchanged.`;
 
 export async function onRequest({ request, env, params }) {
@@ -289,6 +292,56 @@ export async function onRequest({ request, env, params }) {
     return json({ words: bank.words, remaining: left, ready: left === 0, stuck });
   }
 
+  /* She filled the gap with another word from her own list. The sentence's
+     accept list is whatever the writer thought of at the time, so ask - and if
+     it does fit, write it into the bank so the sentence never refuses it again. */
+  if (path === 'sentence-fits' && method === 'POST') {
+    if (!user) return json({ error: 'not logged in' }, 401);
+    const { listId, word, sentence } = await request.json().catch(() => ({}));
+    if (!listId || !word || !sentence) return json({ error: 'missing fields' }, 400);
+    if (!env.ANTHROPIC_API_KEY) return json({ error: 'not configured' }, 503);
+
+    const raw = await env.LEARNING_KV.get(bankKey(user, listId));
+    if (!raw) return json({ error: 'no sentences for this list' }, 404);
+    const bank = JSON.parse(raw);
+    // only ever judge a sentence we actually wrote, filled with a word she owns
+    const entry = Object.values(bank.words).find(
+      e => e.sentences.some(s => s.text === sentence));
+    if (!entry) return json({ error: 'unknown sentence' }, 404);
+    const target = entry.sentences.find(s => s.text === sentence);
+    if (target.accept.some(a => normWord(a) === normWord(word))) return json({ fits: true });
+    if (!await withinBudget(env, user, 1)) return json({ error: 'daily limit reached' }, 429);
+
+    let fits = false;
+    try {
+      const out = await askClaude(env, {
+        system: `A 10-year-old learning English filled a gap in a practice sentence. Decide whether her word makes the sentence correct and sensible English - not whether it was the word the sentence was written for. If a reader would accept the finished sentence without a second thought, it fits. Judge the finished sentence only.`,
+        prompt: `Sentence: ${sentence}
+She wrote: ${word}
+Finished sentence: ${sentence.replace('___', word)}`,
+        schema: {
+          type: 'object',
+          properties: { fits: { type: 'boolean' } },
+          required: ['fits'],
+          additionalProperties: false,
+        },
+        model: env.CHECK_MODEL,
+        effort: 'low',
+      });
+      fits = out.fits === true;
+    } catch (e) {
+      console.error(`sentence-fits FAILED "${word}": ${e && e.message || e}`);
+      return json({ error: 'check failed' }, 502);
+    }
+
+    if (fits) {
+      target.accept.push(word);
+      await env.LEARNING_KV.put(bankKey(user, listId), JSON.stringify(bank));
+      console.log(`sentence-fits: "${word}" now accepted for "${sentence}"`);
+    }
+    return json({ fits });
+  }
+
   /* Grade a sentence she wrote herself. */
   if (path === 'sentence-check' && method === 'POST') {
     if (!user) return json({ error: 'not logged in' }, 401);
@@ -309,6 +362,7 @@ export async function onRequest({ request, env, params }) {
       });
       return json({
         verdict: ['great', 'almost', 'try_again'].includes(out.verdict) ? out.verdict : 'almost',
+        word_ok: out.word_ok !== false,
         feedback: String(out.feedback || ''),
         correction: String(out.correction || ''),
       });

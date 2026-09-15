@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>המילים שלי ✨ תרגול אנגלית</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦄</text></svg>">
-<link rel="stylesheet" href="style.css?v=16">
+<link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
 
@@ -129,7 +129,10 @@
       <textarea id="sentence-input" class="en" rows="2" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Write your sentence here..." hidden></textarea>
       <button id="btn-check" class="big-btn primary">בדיקה ✔</button>
       <div id="feedback" class="feedback" hidden></div>
-      <button id="btn-next" class="big-btn primary" hidden>הבאה ⬅</button>
+      <div class="nav-row">
+        <button id="btn-prev" class="small-btn" hidden>➡ הקודמת</button>
+        <button id="btn-next" class="big-btn primary" hidden>הבאה ⬅</button>
+      </div>
     </div>
   </section>
 
@@ -139,6 +142,7 @@
       <div id="summary-stars" class="summary-stars"></div>
       <h2 id="summary-title"></h2>
       <p id="summary-score" class="summary-score"></p>
+      <div id="summary-written"></div>
       <div id="summary-mistakes"></div>
       <div class="summary-actions">
         <button id="btn-retry-wrong" class="big-btn primary" hidden>💪 לתרגל את הטעויות</button>
@@ -192,6 +196,6 @@
 </div>
 
 <div id="confetti-layer"></div>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

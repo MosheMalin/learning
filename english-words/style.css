@@ -432,6 +432,40 @@ input:focus { outline: none; border-color: var(--purple); }
   font-weight: 700;
 }
 
+/* stepping back and forth through a round */
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.nav-row #btn-next { flex: 1; margin: 10px 0; }
+.nav-row #btn-prev { white-space: nowrap; }
+
+/* her own sentences, shown back to her at the end of a writing round */
+#summary-written { margin: 14px 0; }
+.my-sentence {
+  background: #faf7ff;
+  border-radius: 14px;
+  padding: 8px 12px;
+  margin: 6px 0;
+  text-align: right;
+}
+.my-sentence .my-word {
+  display: inline-block;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-weight: 800;
+  color: var(--purple-dark);
+  margin-left: 8px;
+}
+.my-sentence .en {
+  display: inline-block;
+  direction: ltr;
+  unicode-bidi: isolate;
+  color: var(--ink);
+}
+
 /* ===== Preparing a list's sentences ===== */
 .prep-emoji { font-size: 2.6rem; }
 #prep-fill {

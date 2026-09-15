@@ -1,6 +1,6 @@
 /* The two sentence exercises: filling a word into a sentence, and writing a
    sentence of her own. The Claude-backed routes are stubbed in the fixture. */
-const { test, expect, nextWord, score } = require('./app-fixture');
+const { test, expect, nextWord, score, WORDS } = require('./app-fixture');
 
 const startFill = async app => {
   await app.click('.mode-btn[data-mode="fill"]');
@@ -130,4 +130,100 @@ test('the write screen shows the textarea and hides the one-line input', async (
   await startWrite(app);
   await expect(app.locator('#sentence-input')).toBeVisible();
   await expect(app.locator('#answer-input')).toBeHidden();
+});
+
+/* ---------- a word she already knows, in a gap written for another ---------- */
+
+test('a different word from her list gets a second chance', async ({ app }) => {
+  let asked = null;
+  await app.route('**/api/sentence-fits', async r => {
+    asked = r.request().postDataJSON();
+    await r.fulfill({ json: { fits: true } });
+  });
+  await app.click('.mode-btn[data-mode="fill"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  const word = await app.evaluate(() => practice.queue[practice.index]);
+  const other = WORDS.map(w => w.en).find(en => !word.accept.includes(en));
+
+  await app.fill('#answer-input', other);
+  await app.click('#btn-check');
+  await expect(app.locator('#feedback')).toHaveClass(/good/);
+  expect(await score(app)).toMatchObject({ correct: 1, wrong: 0 });
+  expect(asked).toMatchObject({ word: other, sentence: word.sentence });
+});
+
+test('a word that does not fit is still wrong', async ({ app }) => {
+  await app.route('**/api/sentence-fits', r => r.fulfill({ json: { fits: false } }));
+  await app.click('.mode-btn[data-mode="fill"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  const word = await app.evaluate(() => practice.queue[practice.index]);
+  const other = WORDS.map(w => w.en).find(en => !word.accept.includes(en));
+
+  await app.fill('#answer-input', other);
+  await app.click('#btn-check');
+  await expect(app.locator('#feedback')).toHaveClass(/bad/);
+  expect(await score(app)).toMatchObject({ correct: 0, wrong: 1 });
+});
+
+test('a word not on her list never reaches the server', async ({ app }) => {
+  let calls = 0;
+  await app.route('**/api/sentence-fits', r => { calls++; r.fulfill({ json: { fits: true } }); });
+  await app.click('.mode-btn[data-mode="fill"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  await app.fill('#answer-input', 'zzzz');
+  await app.click('#btn-check');
+  await expect(app.locator('#feedback')).toHaveClass(/bad/);
+  expect(calls).toBe(0);
+});
+
+/* ---------- a slip outside the test word ---------- */
+
+test('a mistake elsewhere in the sentence still scores the word', async ({ app }) => {
+  await app.route('**/api/sentence-check', r => r.fulfill({
+    json: { verdict: 'almost', word_ok: true, feedback: 'המילה נכונה!', correction: 'I have a dog.' },
+  }));
+  await app.click('.mode-btn[data-mode="write"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  const word = await app.evaluate(() => practice.queue[practice.index].en);
+
+  await app.fill('#sentence-input', 'i have a ' + word);
+  await app.click('#btn-check');
+  await expect(app.locator('#feedback')).toHaveClass(/good/);
+  // scored, and never sent to "practise the mistakes"
+  expect(await score(app)).toMatchObject({ correct: 1, wrong: 0 });
+});
+
+test('a wrong test word is still a mistake', async ({ app }) => {
+  await app.route('**/api/sentence-check', r => r.fulfill({
+    json: { verdict: 'try_again', word_ok: false, feedback: 'בדקי את המילה', correction: '' },
+  }));
+  await app.click('.mode-btn[data-mode="write"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  const word = await app.evaluate(() => practice.queue[practice.index].en);
+
+  await app.fill('#sentence-input', 'I have a ' + word);
+  await app.click('#btn-check');
+  await expect(app.locator('#feedback')).toHaveClass(/bad/);
+  expect(await score(app)).toMatchObject({ correct: 0, wrong: 1 });
+});
+
+test('the summary shows the sentences she wrote', async ({ app }) => {
+  await app.route('**/api/sentence-check', r => r.fulfill({
+    json: { verdict: 'great', word_ok: true, feedback: 'יופי', correction: '' },
+  }));
+  await app.click('.mode-btn[data-mode="write"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  const mine = [];
+  for (let i = 0; i < 9; i++) {
+    const word = await app.evaluate(() => practice.queue[practice.index].en);
+    const text = `I like my ${word}.`;
+    mine.push(text);
+    await app.fill('#sentence-input', text);
+    await app.click('#btn-check');
+    await expect(app.locator('#feedback')).toHaveClass(/good/);
+    await nextWord(app);
+  }
+  await app.waitForSelector('#screen-summary:not([hidden])');
+  const shown = await app.locator('#summary-written').textContent();
+  for (const text of mine) expect(shown).toContain(text);
 });
