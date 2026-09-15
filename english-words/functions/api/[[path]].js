@@ -10,7 +10,11 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const SESSION_TTL = 60 * 60 * 24 * 30; // 30 days
 
-const MODEL = 'claude-opus-5';
+/* Which model writes the sentences and which one marks them. Both are plain
+   Pages variables, so either can be changed without touching this code.
+   Writing simple sentences is an easier job than judging a child's writing,
+   so they are separate knobs. */
+const DEFAULT_MODEL = 'claude-opus-5';
 const SENTENCES_PER_WORD = 10;
 const WORDS_PER_CALL = 4;      // keeps one request well inside the response window
 const MAX_WORDS_PER_LIST = 40;
@@ -52,10 +56,10 @@ async function withinBudget(env, user, n) {
   return true;
 }
 
-async function askClaude(env, { system, prompt, schema, effort = 'medium' }) {
+async function askClaude(env, { system, prompt, schema, effort = 'medium', model }) {
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const res = await client.messages.create({
-    model: MODEL,
+    model: model || DEFAULT_MODEL,
     max_tokens: 16000,
     system,
     messages: [{ role: 'user', content: prompt }],
@@ -113,6 +117,7 @@ async function generateSentences(env, allWords, targets) {
     `Write sentences for these target words: ${targets.map(w => w.en).join(', ')}.`;
   const out = await askClaude(env, {
     system: SENTENCES_SYSTEM, prompt, schema: SENTENCES_SCHEMA,
+    model: env.SENTENCES_MODEL,
   });
   const known = new Set(allWords.map(w => normWord(w.en)));
   const clean = {};
@@ -282,6 +287,7 @@ export async function onRequest({ request, env, params }) {
         system: CHECK_SYSTEM,
         prompt: `Target word: ${word}\nHer sentence: ${sentence}`,
         schema: CHECK_SCHEMA,
+        model: env.CHECK_MODEL,
       });
       return json({
         verdict: ['great', 'almost', 'try_again'].includes(out.verdict) ? out.verdict : 'almost',

@@ -47,7 +47,23 @@ npx wrangler pages secret put ANTHROPIC_API_KEY --project-name english-words
 ```
 
 Without it the app keeps working exactly as before and the two sentence modes say
-they aren't ready. Usage is capped per user per day (`DAILY_CALL_BUDGET`) so a
+they aren't ready.
+
+Which model does each job is a plain Pages variable, so it can be changed without
+touching the code - `SENTENCES_MODEL` for writing the sentences, `CHECK_MODEL` for
+marking what she wrote. Both default to `claude-opus-5`. Writing simple sentences
+is the easier job of the two, so it is the better candidate for a cheaper model
+(`claude-haiku-4-5`, `claude-sonnet-5`); marking a child's writing and answering
+her in warm, correct Hebrew is the one worth keeping capable. Set either with:
+
+```
+npx wrangler pages secret put SENTENCES_MODEL --project-name english-words
+```
+
+Note that a model restriction on the Console workspace is not a way to choose the
+model - the app asks for one by name, so blocking it stops the feature rather
+than making it cheaper. Change the variable, and let the workspace limits be the
+backstop. Usage is capped per user per day (`DAILY_CALL_BUDGET`) so a
 stuck client can't run up a bill. Generating a whole weekly list costs a few
 cents; a marked sentence is well under one.
 
