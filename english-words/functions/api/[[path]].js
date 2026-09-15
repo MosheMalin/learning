@@ -107,7 +107,8 @@ For each target word you are given, write exactly ${SENTENCES_PER_WORD} differen
 - The blank stands for the target word spelled exactly as given. Never inflect it - no -s, no -ed, no -ing, no capitalisation change beyond the start of a sentence. If a natural sentence would need a different form, write a different sentence instead.
 - 4 to 9 words long. Present simple or past simple only. Everyday beginner vocabulary apart from the target word.
 - Concrete, friendly and age-appropriate. Vary the situation across the ${SENTENCES_PER_WORD} sentences - home, school, friends, animals, food, family, weather, playground - so she cannot memorise them.
-- Give enough context that the target word is a sensible answer for the blank.
+- Every sentence must point at its own target word. Include a clue tied to that specific word - what it does, what it is for, where it belongs, who uses it, what it is made of. A frame that would work with almost any word ("I saw a ___ there.", "This ___ is very nice.", "My ___ is here today.") is not acceptable, however grammatical it is: a reader who knows the words should be able to tell which one belongs in the gap.
+- Vary the openings. No more than two of the sentences may start with the same word.
 
 For "accept", list every word from the full word list that would also make a correct, sensible sentence in that blank - always including the target word itself. Add another word only if the sentence genuinely works with it. Use the exact spelling from the list.`;
 

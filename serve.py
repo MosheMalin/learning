@@ -7,8 +7,9 @@ Usage: python serve.py <directory> [port]
 - /api/* -> fake local versions of the production auth/storage API
   (any login is accepted as a "dev user"; lists persist to dev-lists.json)
 - /api/sentences, /api/sentence-check -> canned stand-ins for the Claude-backed
-  routes, so the sentence exercises can be worked on without an API key. The
-  sentences are obviously fake on purpose - never mistake them for the real ones.
+  routes, so the sentence exercises can be worked on without an API key. They are
+  ten fixed frames reused for every word and tagged "[demo]": generic on purpose,
+  no clue to the answer, and nothing to do with what the real prompt produces.
 In production these routes are served by Cloudflare Pages Functions.
 """
 import functools
@@ -39,7 +40,10 @@ DEV_FRAMES = [
 
 
 def dev_sentences(word):
-    return [{'text': f, 'accept': [word['en']]} for f in DEV_FRAMES]
+    # Labelled loudly: these are fixed frames, not Claude's work. They are
+    # deliberately generic - do not judge the real exercise by them.
+    return [{'text': f'[demo {i + 1}] {f}', 'accept': [word['en']]}
+            for i, f in enumerate(DEV_FRAMES)]
 
 
 class Handler(SimpleHTTPRequestHandler):
