@@ -600,6 +600,7 @@ const encourage = ['לא נורא, ננסה שוב! 💪', 'זה בסדר לטע
 let practice = null; // { mode, queue, index, correct, wrong, listId }
 
 function startPractice(mode, words) {
+  if (!words || words.length === 0) return;
   stopSpeech();
   practice = {
     mode,
@@ -631,6 +632,7 @@ function showQuestion() {
   const { mode, queue, index } = practice;
   const word = queue[index];
   practice.firstTry = true;
+  practice.answered = false;
 
   document.getElementById('progress-fill').style.width = (index / queue.length * 100) + '%';
   document.getElementById('practice-counter').textContent = `מילה ${index + 1} מתוך ${queue.length}`;
@@ -710,6 +712,9 @@ function pick(arr) {
 }
 
 function checkAnswer() {
+  // once the word is right we're done with it - re-checking must never score again
+  if (practice.answered) return;
+
   const { mode, queue, index } = practice;
   const word = queue[index];
   const answer = answerInput.value;
@@ -724,6 +729,7 @@ function checkAnswer() {
   btnNext.hidden = false;
 
   if (ok) {
+    practice.answered = true;
     if (practice.firstTry) {
       practice.correctCount++;
       feedbackEl.textContent = pick(praise);
@@ -790,6 +796,7 @@ document.addEventListener('keydown', e => {
 });
 
 function nextQuestion() {
+  if (practice.index >= practice.queue.length) return; // round already finished
   practice.index++;
   if (practice.index >= practice.queue.length) {
     showSummary();

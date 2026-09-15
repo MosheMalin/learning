@@ -3,3 +3,5 @@ dev-lists.json
 *.pyc
 .wrangler/
 node_modules/
+test-results/
+playwright-report/

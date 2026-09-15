@@ -16,6 +16,12 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute must always win. Several rules below set an explicit
+   `display` on classes we also toggle with `hidden` (.big-btn, the overlays),
+   and an author `display` beats the browser's own `[hidden] { display: none }`
+   - which left "hidden" buttons on screen and clickable. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: "Segoe UI", "Arial Hebrew", Arial, sans-serif;
@@ -362,7 +368,6 @@ input:focus { outline: none; border-color: var(--purple); }
 .date-display { font-weight: 700; color: var(--purple-dark); }
 
 /* ===== Hebrew calendar picker ===== */
-.cal-overlay[hidden] { display: none; }
 .cal-overlay {
   position: fixed;
   inset: 0;

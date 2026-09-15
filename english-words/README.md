@@ -27,6 +27,24 @@ python -m http.server 8123 --directory english-words
 
 then open http://localhost:8123
 
+## Tests
+
+End-to-end tests (Playwright) live in `../tests` and drive the real page in a
+real browser - the scoring bugs worth catching here are DOM/CSS bugs that unit
+tests of the pure functions would sail straight past.
+
+```
+npm install
+npx playwright install chromium   # one-time, downloads the browser
+npm test                          # or: npm run test:ui
+```
+
+They cover the practice scoring (a word scores at most once, the score can never
+exceed the number of words in the round, retry-the-mistakes rounds), the
+forgiving answer matching, the keyboard-language magic, and that everything the
+app hides with the `hidden` attribute is genuinely hidden. Sign-in and `/api/*`
+are stubbed, so the tests need no account and no network.
+
 ## Deploy to Cloudflare Pages
 
 Deployed as the Cloudflare Pages project **english-words**, live at

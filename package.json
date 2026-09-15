@@ -1,0 +1,13 @@
+{
+  "name": "learning",
+  "private": true,
+  "description": "Family learning apps - see english-words/README.md",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "serve": "python serve.py english-words 8123"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0"
+  }
+}
