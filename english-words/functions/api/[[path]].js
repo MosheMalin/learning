@@ -15,9 +15,10 @@ const SESSION_TTL = 60 * 60 * 24 * 30; // 30 days
    Writing simple sentences is an easier job than judging a child's writing,
    so they are separate knobs. */
 const DEFAULT_MODEL = 'claude-opus-5';
-const SENTENCES_PER_WORD = 10;
-const SENTENCES_ASKED = 13;    // spares, so the vaguest can be dropped
-const WORDS_PER_CALL = 4;      // keeps one request well inside the response window
+const SENTENCES_PER_WORD = 5;
+const SENTENCES_ASKED = 7;     // spares, so the vaguest can be dropped
+const WORDS_PER_CALL = 2;      // one request must answer well inside ~100s, or
+                               // Cloudflare drops the connection with nothing
 const MAX_WORDS_PER_LIST = 40;
 const DAILY_CALL_BUDGET = 400; // per user, protects the API key from a runaway loop
 
@@ -59,13 +60,14 @@ async function withinBudget(env, user, n) {
 
 async function askClaude(env, { system, prompt, schema, effort = 'medium', model }) {
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  const res = await client.messages.create({
+  // streamed: a non-streamed call of this size can outlast the request itself
+  const res = await client.messages.stream({
     model: model || DEFAULT_MODEL,
-    max_tokens: 16000,
+    max_tokens: 8000,
     system,
     messages: [{ role: 'user', content: prompt }],
     output_config: { effort, format: { type: 'json_schema', schema } },
-  });
+  }).finalMessage();
   const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
   return JSON.parse(text);
 }
@@ -123,6 +125,7 @@ async function generateSentences(env, allWords, targets) {
   const out = await askClaude(env, {
     system: SENTENCES_SYSTEM, prompt, schema: SENTENCES_SCHEMA,
     model: env.SENTENCES_MODEL,
+    effort: 'low', // short beginner sentences don't need deliberation, and speed matters here
   });
   const known = new Set(allWords.map(w => normWord(w.en)));
   const clean = {};
@@ -264,11 +267,16 @@ export async function onRequest({ request, env, params }) {
 
     const batch = missing.slice(0, WORDS_PER_CALL);
     let made;
+    const started = Date.now();
     try {
       made = await generateSentences(env, words, batch);
     } catch (e) {
+      // `wrangler pages deployment tail` is the only window into this
+      console.error(`sentences FAILED for [${batch.map(w => w.en)}] after ` +
+        `${Date.now() - started}ms: ${e && e.message || e}`);
       return json({ error: 'generation failed', detail: String(e && e.message || e) }, 502);
     }
+    console.log(`sentences: [${batch.map(w => w.en)}] in ${Date.now() - started}ms`);
     // merge: only ever add words, never rewrite sentences we already have
     for (const [key, entry] of Object.entries(made)) {
       if (!bank.words[key]) bank.words[key] = entry;
@@ -305,6 +313,7 @@ export async function onRequest({ request, env, params }) {
         correction: String(out.correction || ''),
       });
     } catch (e) {
+      console.error(`sentence-check FAILED for "${word}": ${e && e.message || e}`);
       return json({ error: 'check failed', detail: String(e && e.message || e) }, 502);
     }
   }
