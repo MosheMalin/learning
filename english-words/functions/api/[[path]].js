@@ -16,6 +16,7 @@ const SESSION_TTL = 60 * 60 * 24 * 30; // 30 days
    so they are separate knobs. */
 const DEFAULT_MODEL = 'claude-opus-5';
 const SENTENCES_PER_WORD = 10;
+const SENTENCES_ASKED = 13;    // spares, so the vaguest can be dropped
 const WORDS_PER_CALL = 4;      // keeps one request well inside the response window
 const MAX_WORDS_PER_LIST = 40;
 const DAILY_CALL_BUDGET = 400; // per user, protects the API key from a runaway loop
@@ -100,15 +101,18 @@ const SENTENCES_SCHEMA = {
   additionalProperties: false,
 };
 
-const SENTENCES_SYSTEM = `You write example sentences for a 10-year-old Israeli girl learning English as a foreign language (her mother tongue is Hebrew). She is practising a fixed list of words for her weekly spelling test.
+const SENTENCES_SYSTEM = `You write example sentences for a 10-year-old Israeli girl learning English as a foreign language. Her mother tongue is Hebrew and she is practising a fixed list of words for her weekly spelling test.
 
-For each target word you are given, write exactly ${SENTENCES_PER_WORD} different sentences. Every sentence must follow all of these rules:
+Her English is far behind her age: write for the reading level of a six-year-old native speaker. Apart from the target word, use only words she is certain to know already - the most common words in English (my, our, the, a, is, has, likes, sees, plays, eats, runs, goes, sits, big, small, red, new, old, good, happy, mom, dad, home, school, park, cat, ball, bed, food, water, day, morning). If a sentence needs "mailman", "vet", "attic", "chimney", "leash", "obedient", "borrowed" or anything like them, throw it away and write a simpler one. A clue she cannot read is not a clue.
+
+For each target word you are given, write exactly ${SENTENCES_ASKED} different sentences. Every sentence must follow all of these rules:
 - Write the sentence with the target word replaced by exactly one blank: ___ (three underscores). Exactly one blank per sentence, and the target word must not appear anywhere else in it.
 - The blank stands for the target word spelled exactly as given. Never inflect it - no -s, no -ed, no -ing, no capitalisation change beyond the start of a sentence. If a natural sentence would need a different form, write a different sentence instead.
-- 4 to 9 words long. Present simple or past simple only. Everyday beginner vocabulary apart from the target word.
-- Concrete, friendly and age-appropriate. Vary the situation across the ${SENTENCES_PER_WORD} sentences - home, school, friends, animals, food, family, weather, playground - so she cannot memorise them.
-- Every sentence must point at its own target word. Include a clue tied to that specific word - what it does, what it is for, where it belongs, who uses it, what it is made of. A frame that would work with almost any word ("I saw a ___ there.", "This ___ is very nice.", "My ___ is here today.") is not acceptable, however grammatical it is: a reader who knows the words should be able to tell which one belongs in the gap.
-- Vary the openings. No more than two of the sentences may start with the same word.
+- 4 to 8 words long. Present simple or past simple only.
+- American spelling: color, favorite, mom.
+- Every sentence must point at its own target word, using a clue she can read: what it does, what it is for, where it belongs, who uses it. A frame that would work with almost any word ("I saw a ___ there.", "This ___ is very nice.", "My ___ is here today.") is not acceptable, however grammatical it is. Someone who knows the words should be able to tell which one belongs in the gap.
+- Concrete and friendly. Vary the situation across the ${SENTENCES_ASKED} sentences - home, school, friends, animals, food, family, weather, playground - so she cannot memorise them, and vary the openings: no more than two sentences may start with the same word.
+- Before you keep a sentence, read it back with the target word written into the gap and check it is correct English, articles included. "When ___ plays, it makes everyone happy." is wrong; it needs "the" before the gap. What she fills in must end up as a correct sentence.
 
 For "accept", list every word from the full word list that would also make a correct, sensible sentence in that blank - always including the target word itself. Add another word only if the sentence genuinely works with it. Use the exact spelling from the list.`;
 
@@ -135,7 +139,12 @@ async function generateSentences(env, allWords, targets) {
           target.en,
           ...(Array.isArray(s.accept) ? s.accept : []).filter(a => known.has(normWord(a))),
         ])],
-      }));
+      }))
+      // A sentence that half the list could fill isn't pointing at its word, and
+      // the model tells us which those are: the longer the accept list, the
+      // vaguer the sentence. Keep the sharpest, drop the spares.
+      .sort((a, b) => a.accept.length - b.accept.length)
+      .slice(0, SENTENCES_PER_WORD);
     if (sentences.length) clean[normWord(target.en)] = { en: target.en, he: target.he, sentences };
   }
   return clean;
