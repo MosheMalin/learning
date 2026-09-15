@@ -227,3 +227,27 @@ test('the summary shows the sentences she wrote', async ({ app }) => {
   const shown = await app.locator('#summary-written').textContent();
   for (const text of mine) expect(shown).toContain(text);
 });
+
+test('practice waits for the accept-list check, not just the sentences', async ({ app }) => {
+  // the server writes the sentences first, then checks which words fit each gap;
+  // a round must not start on accept lists that haven't been checked
+  const bank = {};
+  let posts = 0;
+  await app.route('**/api/sentences**', async r => {
+    if (r.request().method() === 'POST') {
+      posts++;
+      WORDS.forEach(w => {
+        bank[w.en] = bank[w.en] || {
+          en: w.en, he: w.he,
+          sentences: [{ text: `A ___ here for ${w.en}.`, accept: [w.en] }],
+        };
+      });
+    }
+    // every word present, but still not ready until the check has run
+    await r.fulfill({ json: { words: bank, remaining: posts < 2 ? 1 : 0, ready: posts >= 2 } });
+  });
+
+  await app.click('.mode-btn[data-mode="fill"]');
+  await app.waitForSelector('#screen-practice:not([hidden])');
+  expect(posts).toBeGreaterThanOrEqual(2);
+});

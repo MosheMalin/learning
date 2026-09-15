@@ -19,6 +19,7 @@ const SENTENCES_PER_WORD = 5;
 const SENTENCES_ASKED = 7;     // spares, so the vaguest can be dropped
 const WORDS_PER_CALL = 2;      // one request must answer well inside ~100s, or
                                // Cloudflare drops the connection with nothing
+const WORDS_PER_VERIFY = 3;    // checking finished sentences is the lighter job
 const MAX_WORDS_PER_LIST = 40;
 const DAILY_CALL_BUDGET = 400; // per user, protects the API key from a runaway loop
 
@@ -48,6 +49,10 @@ const json = (obj, status = 200, headers = {}) =>
 const normWord = w => (w || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 const bankKey = (user, listId) => `user:${user.sub}:sentences:${listId}`;
+
+/* Accept lists are only true for the word set they were judged against: add a
+   word to a list and every earlier sentence has to be asked about again. */
+const wordSetKey = words => words.map(w => normWord(w.en)).sort().join('|');
 
 /* a rough daily ceiling per user, so a stuck client can't burn the API key */
 async function withinBudget(env, user, n) {
@@ -153,6 +158,70 @@ async function generateSentences(env, allWords, targets) {
   return clean;
 }
 
+/* Which of her words fit each gap.
+
+   Deciding this while writing the sentence is a side-task, and it shows: a
+   sentence written for "clock" ("My ___ wakes me up each morning") came back
+   accepting only "clock", though "father" is just as right - and she was marked
+   wrong for it. Asked on its own, about finished sentences, it is a much easier
+   question. It also catches up when words are added to a list later. */
+
+const ACCEPT_SCHEMA = {
+  type: 'object',
+  properties: {
+    sentences: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          accept: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['text', 'accept'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['sentences'],
+  additionalProperties: false,
+};
+
+const ACCEPT_SYSTEM = `Each sentence below has one gap, written as ___. You are given the full list of words a child is practising.
+
+For every sentence, list each word from the list that would make the finished sentence correct and sensible English. Put the word in the gap, read the whole sentence back, and ask whether a reader would accept it without a second thought. Judge only the finished sentence - never which word the sentence was "meant" for.
+
+Include a word when it genuinely works, even if the sentence was clearly written for a different one: "My ___ wakes me up each morning" works with "clock" and with "father", and both belong in its list. Leave a word out when the result is odd, ungrammatical, or means something the sentence cannot mean. Copy each sentence's text back exactly as given, and use the exact spelling of the words from the list.`;
+
+async function verifyAccepts(env, allWords, entries) {
+  const texts = entries.flatMap(e => e.sentences.map(s => s.text));
+  if (!texts.length) return;
+  const out = await askClaude(env, {
+    system: ACCEPT_SYSTEM,
+    prompt: [
+      `The words she is practising: ${allWords.map(w => w.en).join(', ')}.`,
+      '',
+      'Sentences:',
+      ...texts.map(t => `- ${t}`),
+    ].join(`
+`),
+    schema: ACCEPT_SCHEMA,
+    model: env.CHECK_MODEL,
+    effort: 'low',
+  });
+  const known = new Set(allWords.map(w => normWord(w.en)));
+  const byText = new Map((out.sentences || []).map(s => [s.text, s.accept]));
+  for (const entry of entries) {
+    for (const sentence of entry.sentences) {
+      const verified = byText.get(sentence.text);
+      if (!Array.isArray(verified)) continue;   // unanswered: keep what we had
+      sentence.accept = [...new Set([
+        entry.en,                               // its own word always counts
+        ...verified.filter(a => known.has(normWord(a))),
+      ])];
+    }
+  }
+}
+
 const CHECK_SCHEMA = {
   type: 'object',
   properties: {
@@ -255,9 +324,15 @@ export async function onRequest({ request, env, params }) {
     if (!list) return json({ error: 'no such list' }, 404);
     const words = (list.words || []).filter(w => w && w.en && w.he).slice(0, MAX_WORDS_PER_LIST);
     const missing = words.filter(w => !bank.words[normWord(w.en)]);
+    const setKey = wordSetKey(words);
+    const unverified = () => Object.values(bank.words).filter(e => e.checkedFor !== setKey);
 
-    if (method === 'GET' || missing.length === 0) {
-      return json({ words: bank.words, remaining: missing.length, ready: missing.length === 0 });
+    if (method === 'GET') {
+      return json({
+        words: bank.words,
+        remaining: missing.length + unverified().length,
+        ready: missing.length === 0 && unverified().length === 0,
+      });
     }
     if (method !== 'POST') return json({ error: 'not found' }, 404);
 
@@ -266,6 +341,29 @@ export async function onRequest({ request, env, params }) {
     }
     if (!await withinBudget(env, user, 1)) {
       return json({ error: 'daily limit reached' }, 429);
+    }
+
+    // everything is written: check the accept lists of whatever hasn't been
+    // judged against this word set yet, a few words at a time
+    if (missing.length === 0) {
+      const stale = unverified().slice(0, WORDS_PER_VERIFY);
+      if (stale.length === 0) {
+        return json({ words: bank.words, remaining: 0, ready: true });
+      }
+      if (!await withinBudget(env, user, 1)) return json({ error: 'daily limit reached' }, 429);
+      const t0 = Date.now();
+      try {
+        await verifyAccepts(env, words, stale);
+      } catch (e) {
+        console.error(`accepts FAILED for [${stale.map(e2 => e2.en)}]: ${e && e.message || e}`);
+        // a sentence with an unchecked accept list is still usable - don't loop
+        stale.forEach(e2 => { e2.checkedFor = setKey; });
+      }
+      stale.forEach(e2 => { e2.checkedFor = setKey; });
+      await env.LEARNING_KV.put(bankKey(user, listId), JSON.stringify(bank));
+      console.log(`accepts: [${stale.map(e2 => e2.en)}] in ${Date.now() - t0}ms`);
+      const left = unverified().length;
+      return json({ words: bank.words, remaining: left, ready: left === 0 });
     }
 
     const batch = missing.slice(0, WORDS_PER_CALL);
@@ -289,7 +387,12 @@ export async function onRequest({ request, env, params }) {
     const left = words.filter(w => !bank.words[normWord(w.en)]).length;
     // a word Claude returned nothing usable for would loop forever - report it
     const stuck = left === missing.length;
-    return json({ words: bank.words, remaining: left, ready: left === 0, stuck });
+    return json({
+      words: bank.words,
+      remaining: left + unverified().length,
+      ready: false,           // the accept pass still has to run
+      stuck,
+    });
   }
 
   /* She filled the gap with another word from her own list. The sentence's

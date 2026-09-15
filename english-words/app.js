@@ -1113,10 +1113,11 @@ document.getElementById('prep-cancel').addEventListener('click', () => {
 
 function showPrep(done, total) {
   prepOverlay.hidden = false;
-  prepMsg.textContent = total
+  // two phases: writing the sentences, then checking which words fit each gap
+  prepMsg.textContent = done < total
     ? `מכינים משפטים לרשימה... ${done} מתוך ${total} מילים`
-    : 'מכינים משפטים לרשימה...';
-  prepFill.style.width = total ? (done / total * 100) + '%' : '5%';
+    : 'עוד רגע, בודקים את המשפטים... 🔍';
+  prepFill.style.width = total ? Math.max(5, done / total * 100) + '%' : '5%';
 }
 
 /* Fetch what exists, then ask the server to write the missing words in small
@@ -1125,7 +1126,8 @@ async function ensureSentences(listId, { quiet = false } = {}) {
   const r = await fetch('api/sentences?listId=' + encodeURIComponent(listId));
   if (!r.ok) throw new Error(r.status === 503 ? 'unconfigured' : 'offline');
   let state = await r.json();
-  const total = Object.keys(state.words).length + state.remaining;
+  const list = getList(listId);
+  const total = list ? list.words.length : Object.keys(state.words).length + state.remaining;
 
   prepCancelled = false;
   while (!state.ready) {
