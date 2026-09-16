@@ -1,6 +1,6 @@
 # Parental tracking across the learning apps — design
 
-*Status: agreed 2026-09-16 (decisions in section 10). First app to instrument: `english-words`.*
+*Status: agreed 2026-09-16 (decisions in section 10); phases 1 and 2 implemented the same day in `tracker/`, `shared/auth/` and english-words. Where the code refined the design, this document was amended to match.*
 
 ## 1. Goal
 
@@ -212,6 +212,8 @@ CREATE TABLE events (
   type        TEXT NOT NULL,
   at          TEXT NOT NULL,             -- client UTC ISO
   received_at TEXT NOT NULL,
+  app_version TEXT,                      -- from the batch, so a rebuild has them
+  device      TEXT,                      -- JSON, from the batch
   payload     TEXT NOT NULL              -- the event as received, JSON
 );
 CREATE INDEX events_session ON events(session_id, at);
@@ -219,7 +221,7 @@ CREATE INDEX events_student ON events(student, at);
 
 CREATE TABLE activities (                 -- unit / exercise / item snapshots
   app        TEXT NOT NULL,
-  id         TEXT NOT NULL,
+  id         TEXT NOT NULL,               -- unit: <unitId>; exercise: exercise:<id>; item: <unitId>/<itemId>
   kind       TEXT NOT NULL CHECK (kind IN ('unit','exercise','item')),
   parent_id  TEXT,                        -- item → its unit
   title      TEXT,
@@ -289,7 +291,15 @@ CREATE TABLE people (
 );
 ```
 
-Folding rules (on ingest, inside one D1 batch per request):
+`attempts.item_id` is the app's own item id (for english-words `normWord(en)`),
+so the same word in two lists aggregates by word; the item's snapshot is found
+through `<unit_id>/<item_id>` in `activities`. What the child saw for a question
+is not copied into `attempts`: the session view reads it from the
+`item.presented` event.
+
+Folding rules (on ingest, one statement at a time; every step is an upsert, so
+a request that dies halfway leaves stored-but-unfolded events that `rebuild`
+repairs):
 
 1. `INSERT OR IGNORE` into `events`. If nothing was inserted, the event was seen
    before: skip its fold.
@@ -441,11 +451,14 @@ Cross-app by construction: every screen is built from `sessions` / `attempts` /
 
 ## 9. Phases
 
-1. **Pipe** — `tracker/` Worker with D1 schema, migrations, ingest, fold, SDK;
-   router routes; `shared/auth`. english-words emits events. Playwright contract
-   tests. Verify on the live site with a real round.
-2. **Dashboard** — parent API and the four screens. `PARENT_EMAILS`, student
-   auto-enrolment, rename/hide.
+1. **Pipe** — done 2026-09-16: `tracker/` Worker with D1 schema, migrations,
+   ingest, fold, SDK; router service binding; `shared/auth`. english-words emits
+   events. Playwright contract tests (`tests/tracking.spec.js`) and fold unit
+   tests (`tests/tracker/`). Still to do: verify on the live site with a real round.
+2. **Dashboard** — done 2026-09-16: parent API and the four screens (home,
+   student timeline + heatmap, session, unit mastery). `PARENT_EMAILS`, student
+   auto-enrolment, rename/grade/hide, marking another person as a parent,
+   hiding a session.
 3. **Feedback into the apps** — `me/` API; english-words offers "the words you
    missed this week" as a round.
 4. **Tanach** — the second app uses the same SDK from day one: questionnaire =

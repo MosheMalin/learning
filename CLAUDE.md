@@ -15,9 +15,12 @@ english-words/    daughter's weekly spelling practice (הכתבה) — static HT
                   sentence exercises); functions/tts.js = voice proxy
 router-worker/    Worker on the malinvishne.com apex: path prefix → Pages app;
                   APPS map in src/index.js; serves the family home page at /
-tracker/          (planned — docs/parental-tracking-design.md) Worker + D1:
-                  every app reports what each student did; parent dashboard
-shared/           (planned) code both Pages Functions and Workers bundle
+tracker/          Worker + D1 (docs/parental-tracking-design.md): every app
+                  reports what each student did through the SDK it serves at
+                  /learning/track/v1/tracker.js; the parent dashboard lives at
+                  /learning/parent/. Reached via the router's service binding.
+shared/auth/      Google sign-in + the shared session cookie; a workspace
+                  package bundled by both the Pages Functions and the Worker
 tests/            Playwright end-to-end tests driving the real page; /api/*
                   and Google are stubbed in tests/app-fixture.js
 serve.py          local static server with fake /api/*, /tts and canned
@@ -25,12 +28,13 @@ serve.py          local static server with fake /api/*, /tts and canned
 materials/ questions/   Tanach bagrut research for the son's future app
 ```
 
-Run locally: `preview_start` with launch.json name `english-words`
-(never Bash for servers). Tests: `npm test` (Playwright, chromium). Deploy:
-`deploy-english-words.ps1` for the app, `npx wrangler deploy` inside
-`router-worker/` for the router — **deploy only when the owner asks**, and
-bump the `?v=` query on `style.css`/`app.js` in `index.html` with every app
-change or phones keep the old file.
+Run locally: `preview_start` with launch.json names `english-words` and
+`tracker` (never Bash for servers; serve.py proxies the tracker paths to
+:8787 when it is up). Tests: `npm test` = the fold's unit tests (node:test on
+Node's built-in SQLite) then Playwright. Deploy: `deploy-english-words.ps1`
+for the app, `deploy-tracker.ps1` for the tracker + router — **deploy only
+when the owner asks**, and bump the `?v=` query on `style.css`/`app.js` in an
+`index.html` with every change to them or phones keep the old file.
 
 ## Rules
 

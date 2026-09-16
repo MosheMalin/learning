@@ -68,6 +68,18 @@ cents; a marked sentence is well under one.
 Locally, `serve.py` answers both routes with obviously-fake canned sentences, so
 the exercises can be worked on without a key.
 
+## Tracking (the parent dashboard)
+
+Every round is reported to the family's tracker — see
+[`../docs/parental-tracking-design.md`](../docs/parental-tracking-design.md)
+and [`../tracker/README.md`](../tracker/README.md). `index.html` loads the SDK
+from `/learning/track/v1/tracker.js` (served by the tracker Worker through the
+family domain) and `app.js` reports from five places: the round starting, each
+question shown, each answer checked, the summary, and leaving a round early.
+Everything goes through `practice.track`, which is `null` when the SDK is not
+there, so the app behaves identically without it. The contract of what a round
+reports is pinned by `tests/tracking.spec.js`.
+
 ## Tech
 
 Plain HTML/CSS/JS in the browser, no build step. Sign-in, storage and the two
