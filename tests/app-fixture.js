@@ -16,8 +16,20 @@ const WORDS = [
 ];
 
 const test = base.extend({
+  // every batch the page posts to the tracker, in order; the tracker itself is
+  // stubbed, so the tests see exactly what the app reports and nothing else
+  tracked: async ({ page }, use) => {
+    const batches = [];
+    await page.route('**/learning/track/v1/events', async r => {
+      const batch = r.request().postDataJSON();
+      batches.push(batch);
+      await r.fulfill({ json: { accepted: batch.events.length, duplicates: 0 } });
+    });
+    await use(batches);
+  },
+
   // a page sitting on the list screen of a 9-word list, ready to pick a mode
-  app: async ({ page }, use) => {
+  app: async ({ page, tracked }, use) => {
     await page.route('**/accounts.google.com/**', r =>
       r.fulfill({ body: '', contentType: 'application/javascript' }));
     await page.route('**/api/me', r =>
@@ -93,4 +105,10 @@ async function nextWord(page) {
   await page.click('#btn-next');
 }
 
-module.exports = { test, expect, answer, nextWord, currentAnswer, score, WORDS };
+/** Everything reported so far, flattened, after forcing the SDK to post. */
+async function reported(page, tracked) {
+  await page.evaluate(() => window.Tracker ? Tracker.flushAll() : null);
+  return tracked.flatMap(b => b.events);
+}
+
+module.exports = { test, expect, answer, nextWord, currentAnswer, score, reported, WORDS };

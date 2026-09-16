@@ -3,8 +3,10 @@
   "private": true,
   "description": "Family learning apps - see english-words/README.md",
   "scripts": {
-    "test": "playwright test",
+    "test": "node --test tests/tracker/*.test.js && playwright test",
+    "test:e2e": "playwright test",
     "test:ui": "playwright test --ui",
+    "test:tracker": "node --test tests/tracker/*.test.js",
     "serve": "python serve.py english-words 8123"
   },
   "devDependencies": {
@@ -12,5 +14,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0"
-  }
+  },
+  "workspaces": [
+    "shared/*"
+  ]
 }

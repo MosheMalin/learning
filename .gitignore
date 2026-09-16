@@ -5,3 +5,4 @@ dev-lists.json
 node_modules/
 test-results/
 playwright-report/
+dev-events.jsonl

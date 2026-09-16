@@ -7,8 +7,7 @@
 // the network, so a round plays the same offline as online.
 
 import Anthropic from '@anthropic-ai/sdk';
-
-const SESSION_TTL = 60 * 60 * 24 * 30; // 30 days
+import { getSession, verifyGoogleCredential, createSession, destroySession } from '@learning/auth';
 
 /* Which model writes the sentences and which one marks them. Both are plain
    Pages variables, so either can be changed without touching this code.
@@ -22,19 +21,6 @@ const WORDS_PER_CALL = 2;      // one request must answer well inside ~100s, or
 const WORDS_PER_VERIFY = 3;    // checking finished sentences is the lighter job
 const MAX_WORDS_PER_LIST = 40;
 const DAILY_CALL_BUDGET = 400; // per user, protects the API key from a runaway loop
-
-function getCookie(request, name) {
-  const c = request.headers.get('Cookie') || '';
-  const m = c.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
-  return m ? m[1] : null;
-}
-
-async function getSession(request, env) {
-  const sid = getCookie(request, 'sid');
-  if (!sid) return null;
-  const raw = await env.LEARNING_KV.get('session:' + sid);
-  return raw ? JSON.parse(raw) : null;
-}
 
 const json = (obj, status = 200, headers = {}) =>
   new Response(JSON.stringify(obj), {
@@ -254,32 +240,15 @@ export async function onRequest({ request, env, params }) {
   if (path === 'login' && method === 'POST') {
     const { credential } = await request.json().catch(() => ({}));
     if (!credential) return json({ error: 'missing credential' }, 400);
-    const verify = await fetch(
-      'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(credential));
-    if (!verify.ok) return json({ error: 'invalid token' }, 401);
-    const info = await verify.json();
-    if (!env.GOOGLE_CLIENT_ID || info.aud !== env.GOOGLE_CLIENT_ID || info.email_verified !== 'true') {
-      return json({ error: 'invalid token' }, 401);
-    }
-    const user = {
-      sub: info.sub,
-      email: info.email,
-      name: info.name || info.email,
-      picture: info.picture || '',
-    };
-    const sid = crypto.randomUUID() + crypto.randomUUID();
-    await env.LEARNING_KV.put('session:' + sid, JSON.stringify(user), { expirationTtl: SESSION_TTL });
-    return json(user, 200, {
-      'Set-Cookie': `sid=${sid}; Max-Age=${SESSION_TTL}; Path=/; HttpOnly; Secure; SameSite=Lax`,
-    });
+    const user = await verifyGoogleCredential(credential, env.GOOGLE_CLIENT_ID);
+    if (!user) return json({ error: 'invalid token' }, 401);
+    const cookie = await createSession(env, user);
+    return json(user, 200, { 'Set-Cookie': cookie });
   }
 
   if (path === 'logout' && method === 'POST') {
-    const sid = getCookie(request, 'sid');
-    if (sid) await env.LEARNING_KV.delete('session:' + sid);
-    return json({ ok: true }, 200, {
-      'Set-Cookie': 'sid=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax',
-    });
+    const cookie = await destroySession(request, env);
+    return json({ ok: true }, 200, { 'Set-Cookie': cookie });
   }
 
   const user = await getSession(request, env);

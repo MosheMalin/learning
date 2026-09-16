@@ -4,6 +4,8 @@ const PORT = 8124;
 
 module.exports = defineConfig({
   testDir: './tests',
+  // the tracker's unit tests are plain node:test files, not browser tests
+  testIgnore: ['**/tracker/**'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

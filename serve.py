@@ -10,7 +10,12 @@ Usage: python serve.py <directory> [port]
   routes, so the sentence exercises can be worked on without an API key. They are
   ten fixed frames reused for every word and tagged "[demo]": generic on purpose,
   no clue to the answer, and nothing to do with what the real prompt produces.
-In production these routes are served by Cloudflare Pages Functions.
+- /learning/track/* and /learning/parent/* -> proxied to the tracker Worker when
+  `npx wrangler dev --env dev` is running on :8787 (launch.json "tracker"), so a
+  round played here lands in the local dashboard. Without it, the SDK is served
+  from tracker/public and event batches are appended to dev-events.jsonl.
+In production these routes are served by Cloudflare Pages Functions and the
+tracker Worker.
 """
 import functools
 import json
@@ -18,9 +23,15 @@ import os
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dev-lists.json')
+HERE = os.path.dirname(os.path.abspath(__file__))
+DATA_FILE = os.path.join(HERE, 'dev-lists.json')
+EVENTS_FILE = os.path.join(HERE, 'dev-events.jsonl')
+SDK_FILE = os.path.join(HERE, 'tracker', 'public', 'learning', 'track', 'v1', 'tracker.js')
+TRACKER_DEV = 'http://localhost:8787'
+TRACKER_PREFIXES = ('/learning/track/', '/learning/parent')
 DEV_USER = {'sub': 'dev', 'email': 'dev@local', 'name': 'משתמש פיתוח', 'picture': ''}
 
 # in-memory stand-in for the KV sentence bank: {listId: {word: {...}}}
@@ -71,8 +82,77 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get('Content-Length') or 0)
         return self.rfile.read(length) if length else b''
 
+    def is_tracker(self, path):
+        return path.startswith(TRACKER_PREFIXES)
+
+    def tracker(self, body=b''):
+        """Hand the request to the local tracker Worker; fall back to a stub."""
+        path = urlparse(self.path).path
+        try:
+            headers = {k: v for k, v in self.headers.items()
+                       if k.lower() in ('cookie', 'content-type', 'accept')}
+            req = Request(TRACKER_DEV + self.path, data=body or None, headers=headers,
+                          method=self.command)
+            with urlopen(req, timeout=30) as r:
+                data = r.read()
+                self._skip_nocache = True
+                self.send_response(r.status)
+                for k, v in r.headers.items():
+                    if k.lower() in ('content-type', 'set-cookie', 'cache-control'):
+                        self.send_header(k, v)
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                self._skip_nocache = False
+                return
+        except HTTPError as e:
+            data = e.read()
+            self._skip_nocache = True
+            self.send_response(e.code)
+            self.send_header('Content-Type', e.headers.get('Content-Type', 'application/json'))
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            self._skip_nocache = False
+            return
+        except (URLError, OSError):
+            pass  # no local tracker running: the stub below
+        if path == '/learning/track/v1/tracker.js' and self.command == 'GET':
+            with open(SDK_FILE, 'rb') as f:
+                data = f.read()
+            self._skip_nocache = True
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(data)
+            self._skip_nocache = False
+            return
+        if path == '/learning/track/v1/events' and self.command == 'POST':
+            try:
+                batch = json.loads(body or b'{}')
+            except ValueError:
+                return self.send_json({'error': 'bad json'}, 400)
+            with open(EVENTS_FILE, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(batch, ensure_ascii=False) + '\n')
+            return self.send_json({'accepted': len(batch.get('events', [])), 'duplicates': 0})
+        self.send_json({'error': 'tracker is not running (launch.json "tracker")'}, 502)
+
+    def do_PATCH(self):
+        if self.is_tracker(urlparse(self.path).path):
+            return self.tracker(self.read_body())
+        self.send_error(404)
+
+    def do_DELETE(self):
+        if self.is_tracker(urlparse(self.path).path):
+            return self.tracker(self.read_body())
+        self.send_error(404)
+
     def do_GET(self):
         path = urlparse(self.path).path
+        if self.is_tracker(path):
+            return self.tracker()
         if path == '/tts':
             return self.serve_tts()
         if path == '/api/me':
@@ -102,6 +182,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         body = self.read_body()
+        if self.is_tracker(path):
+            return self.tracker(body)
         if path == '/api/login':
             return self.send_json(DEV_USER, cookies=['sid=dev; Path=/'])
         if path == '/api/logout':
@@ -155,6 +237,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_PUT(self):
         path = urlparse(self.path).path
         body = self.read_body()
+        if self.is_tracker(path):
+            return self.tracker(body)
         if path == '/api/sentences':
             if not self.has_session():
                 return self.send_json({'error': 'not logged in'}, 401)

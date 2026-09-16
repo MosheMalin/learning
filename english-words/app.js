@@ -12,6 +12,43 @@ const GOOGLE_CLIENT_ID = '731852048497-pved0t60dqc1pskdkj6tko4ct0qs8dtn.apps.goo
 
 let currentUser = null; // {sub, email, name, picture} when signed in
 
+/* ---------- Tracking ----------
+   Every round is reported to the family's tracker (what the parent dashboard
+   shows) through the SDK loaded from /learning/track/v1/tracker.js. When that
+   script isn't there the app runs exactly the same and simply reports nothing;
+   every call below goes through `practice.track`, which is then null. */
+const APP_VERSION = (() => {
+  try { return new URL(document.currentScript.src).searchParams.get('v'); } catch { return null; }
+})();
+const tracker = window.Tracker ? Tracker.init({ app: 'english-words', appVersion: APP_VERSION }) : null;
+
+/* the mode's name as the buttons show it - one copy, in the HTML */
+function modeTitle(mode) {
+  const el = document.querySelector(`.mode-btn[data-mode="${mode}"] .mode-name`);
+  return el ? el.textContent.trim() : mode;
+}
+
+/* what she was shown for this question, for the parent to see */
+function promptOf(mode, word) {
+  if (mode === 'he2en') return { text: word.he };
+  if (mode === 'en2he') return { text: word.en };
+  if (mode === 'listen') return { audio: word.en };
+  if (mode === 'fill') return { text: word.sentence };
+  return { text: word.en, he: word.he };            // write
+}
+
+/* one submitted answer for the current question */
+function reportAnswer(result, { response, judgedBy = 'rule', feedback } = {}) {
+  if (!practice || !practice.track) return;
+  const { index, queue } = practice;
+  practice.track.answered(index + 1, normEn(queue[index].en), {
+    response, result, judgedBy, feedback,
+    // the point is only ever given on the first try - the rule the summary uses
+    score: result === 'correct' && practice.firstTry ? 1 : 0,
+    maxScore: 1,
+  });
+}
+
 function loadLists() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
@@ -70,6 +107,8 @@ document.getElementById('app-title').addEventListener('click', () => {
 document.querySelectorAll('.back-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     stopSpeech();
+    // leaving a round from its own screen is giving it up
+    if (!screens.practice.hidden && practice && practice.track) practice.track.abandoned();
     const target = btn.dataset.back;
     if (target === 'home') { renderHome(); show('home'); }
     else if (target === 'list') { renderListView(); show('list'); }
@@ -599,7 +638,7 @@ const encourage = ['לא נורא, ננסה שוב! 💪', 'זה בסדר לטע
 
 let practice = null; // { mode, queue, index, correct, wrong, listId }
 
-function startPractice(mode, words) {
+function startPractice(mode, words, { retryOf = null } = {}) {
   if (!words || words.length === 0) return;
   stopSpeech();
   practice = {
@@ -611,7 +650,17 @@ function startPractice(mode, words) {
     wrong: [],
     written: [],   // what she wrote, per question, for the summary
     state: [],     // per question, so she can step back and see it again
+    track: null,   // the tracker's handle for this round, when tracking is on
   };
+  const list = getList(currentListId);
+  practice.track = tracker && tracker.session({
+    exercise: { id: mode, title: modeTitle(mode), interaction: mode === 'write' ? 'long-fill-in' : 'fill-in' },
+    unit: list ? {
+      id: list.id, kind: 'wordlist', title: list.name, examDate: list.examDate || null,
+      items: list.words.map(w => ({ id: normEn(w.en), en: w.en, he: w.he })),
+    } : null,
+    params: { itemCount: words.length, retryOf, mistakesOnly: !!retryOf },
+  });
   show('practice');
   showQuestion();
 }
@@ -700,6 +749,7 @@ function showQuestion() {
   sentenceInput.className = 'en';
 
   renderQuestionBody(mode, queue[index]);
+  if (practice.track) practice.track.presented(index + 1, normEn(queue[index].en), promptOf(mode, queue[index]));
   (mode === 'write' ? sentenceInput : answerInput).focus();
   updateNav();
 }
@@ -863,11 +913,13 @@ async function checkAnswer() {
   const reveal = mode === 'fill' ? word.en : stored;
   const norm = expectEn ? normEn : normHe;
   let ok = matches(answer, stored, norm);
+  let judgedBy = 'rule';
 
   // she answered with a different word off her list: it may be just as right
   if (!ok && mode === 'fill') {
     const alt = otherListWord(answer);
     if (alt) {
+      judgedBy = 'llm';
       practice.checking = true;
       btnCheck.disabled = true;
       btnCheck.textContent = 'בודקים... ⏳';
@@ -887,6 +939,7 @@ async function checkAnswer() {
   btnNext.hidden = false;
 
   if (ok) {
+    reportAnswer('correct', { response: answer, judgedBy });
     practice.answered = true;
     if (practice.firstTry) {
       practice.correctCount++;
@@ -914,6 +967,7 @@ async function checkAnswer() {
   const dist = minDistance(answer, mode === 'fill' ? reveal : stored, norm);
   const mainLen = norm((mode === 'fill' ? reveal : stored).split(/[,/]/)[0]).length;
   const minor = dist === 1 || (dist === 2 && mainLen >= 6);
+  reportAnswer(minor ? 'almost' : 'wrong', { response: answer, judgedBy });
 
   answerInput.classList.remove('wrong', 'almost');
   void answerInput.offsetWidth; // restart the shake animation
@@ -990,6 +1044,7 @@ async function checkWrittenSentence() {
 
   // she has to actually use the word - no need to ask the server about that
   if (!usesWord(text, word.en)) {
+    reportAnswer('wrong', { response: text, feedback: `המילה ${word.en} לא מופיעה במשפט` });
     markWrong(word);
     feedbackEl.className = 'feedback bad';
     feedbackEl.innerHTML = `צריך להשתמש במילה
@@ -1021,6 +1076,7 @@ async function checkWrittenSentence() {
 
   // couldn't reach the marker: don't score it either way, just let her carry on
   if (!res || !res.verdict) {
+    reportAnswer('unjudged', { response: text, judgedBy: 'llm' });
     feedbackEl.className = 'feedback almost';
     feedbackEl.textContent = 'לא הצלחנו לבדוק את המשפט עכשיו 😕 אפשר להמשיך הלאה';
     return;
@@ -1037,8 +1093,11 @@ async function checkWrittenSentence() {
   // an older or partial answer without the flag is read the way the server
   // defaults it: the word was fine
   const wordOk = res.word_ok !== false;
+  // Claude's note, and its corrected sentence when it changed something
+  const note = (res.feedback || '') + (correction ? `\n✔ ${res.correction}` : '');
 
   if (wordOk && res.verdict !== 'great') {
+    reportAnswer('almost', { response: text, judgedBy: 'llm', feedback: note });
     // not a mistake against her word list, so it never reaches practice.wrong -
     // but it isn't finished either, and she can put it right and turn it green
     sentenceInput.classList.remove('wrong', 'almost');
@@ -1051,6 +1110,7 @@ async function checkWrittenSentence() {
   }
 
   if (wordOk && res.verdict === 'great') {
+    reportAnswer('correct', { response: text, judgedBy: 'llm', feedback: note });
     practice.answered = true;
     practice.written[index] = text;
     setProgress((index + 1) / queue.length);
@@ -1071,6 +1131,7 @@ async function checkWrittenSentence() {
   }
 
   // the word itself is wrong, missing or misspelled: this is the one that counts
+  reportAnswer('wrong', { response: text, judgedBy: 'llm', feedback: note });
   markWrong(word);
   sentenceInput.classList.remove('wrong', 'almost');
   void sentenceInput.offsetWidth; // restart the shake
@@ -1214,6 +1275,13 @@ function showSummary() {
   const total = practice.queue.length;
   const correct = practice.correctCount;
   const pct = correct / total;
+  if (practice.track) {
+    practice.track.completed({
+      score: correct, maxScore: total, itemCount: total,
+      correctFirstTry: correct,
+      correctEventually: practice.state.filter(s => s && s.done).length,
+    });
+  }
 
   const starsEl = document.getElementById('summary-stars');
   const titleEl = document.getElementById('summary-title');
@@ -1262,7 +1330,7 @@ function showSummary() {
 }
 
 document.getElementById('btn-retry-wrong').addEventListener('click', () => {
-  startPractice(practice.mode, practice.wrong);
+  startPractice(practice.mode, practice.wrong, { retryOf: practice.track ? practice.track.id : null });
 });
 document.getElementById('btn-practice-again').addEventListener('click', () => {
   const list = getList(practice.listId);

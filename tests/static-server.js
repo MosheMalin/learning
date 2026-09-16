@@ -7,6 +7,11 @@ const path = require('path');
 const root = path.resolve(process.argv[2] || 'english-words');
 const port = Number(process.argv[3] || 8124);
 
+// the tracker SDK lives with the tracker Worker; the app loads it by absolute
+// path, which in production the router forwards there
+const SDK_PATH = '/learning/track/v1/tracker.js';
+const SDK_FILE = path.resolve(__dirname, '..', 'tracker', 'public', 'learning', 'track', 'v1', 'tracker.js');
+
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -17,9 +22,9 @@ const TYPES = {
 
 http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const file = path.join(root, rel === '/' ? 'index.html' : rel);
+  const file = rel === SDK_PATH ? SDK_FILE : path.join(root, rel === '/' ? 'index.html' : rel);
   // never serve outside the root
-  if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
+  if (file !== SDK_FILE && !file.startsWith(root)) { res.writeHead(403).end(); return; }
   fs.readFile(file, (err, body) => {
     if (err) { res.writeHead(404).end('not found'); return; }
     res.writeHead(200, {

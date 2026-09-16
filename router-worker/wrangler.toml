@@ -5,3 +5,8 @@ compatibility_date = "2026-09-01"
 routes = [
   { pattern = "malinvishne.com", custom_domain = true }
 ]
+
+# the tracker Worker (tracker/), deployed separately; never public on its own
+[[services]]
+binding = "TRACKER"
+service = "learning-tracker"
