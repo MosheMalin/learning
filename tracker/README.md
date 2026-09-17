@@ -43,8 +43,10 @@ batches to `dev-events.jsonl`.
 ## Tests
 
 - `npm run test:tracker` — the fold's promises (duplicates, reordering, split
-  batches, repeated tries, abandoned vs completed, rebuild), run against the real
-  SQL on Node's built-in SQLite through a D1-shaped adapter (`tests/tracker/`).
+  batches, repeated tries, a fold that dies mid-batch, concurrent folds of one
+  attempt, abandoned vs completed, rebuild), the role rules and the parent API
+  through the real `fetch` handler, all against the real SQL on Node's built-in
+  SQLite through a D1-shaped adapter (`tests/tracker/`).
 - `npm run test:e2e` — includes `tests/tracking.spec.js`: what one round in
   english-words reports, and that folding it gives the numbers on the child's
   summary screen.
@@ -52,6 +54,7 @@ batches to `dev-events.jsonl`.
 ## Deploy (first time)
 
 ```
+npm install                                        # at the repo root: links shared/auth
 cd tracker
 npx wrangler d1 create learning-tracker            # paste the id into wrangler.toml [[d1_databases]]
 npx wrangler d1 migrations apply learning-tracker --remote

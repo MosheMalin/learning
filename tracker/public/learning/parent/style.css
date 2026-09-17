@@ -30,7 +30,7 @@ body {
 .brand { font-weight: 700; text-decoration: none; color: var(--ink); font-size: 1.1em; }
 .crumbs { flex: 1; color: var(--muted); font-size: .95em; }
 .crumbs a { color: var(--accent); text-decoration: none; }
-.crumbs a:after { content: " › "; color: var(--muted); }
+.crumbs .sep { color: var(--muted); margin: 0 .4em; }
 .auth { display: flex; align-items: center; gap: .5em; font-size: .9em; }
 .auth img { width: 28px; height: 28px; border-radius: 50%; }
 main { max-width: 1000px; margin: 0 auto; padding: 1em; }
@@ -91,7 +91,7 @@ select, input[type=date], input[type=text] {
 .dot.almost { background: var(--almost); }
 .dot.wrong { background: var(--bad); }
 .dot.unjudged { background: var(--grey-soft); border: 1px solid var(--muted); }
-.dot.retry { background: var(--good); opacity: .45; }
+.dot.retry { background: transparent; border: 2px solid var(--good); box-sizing: border-box; }
 
 .pill { display: inline-block; padding: .05em .55em; border-radius: 999px; font-size: .85em; white-space: nowrap; }
 .pill.correct { background: var(--good-soft); color: var(--good); }
@@ -102,7 +102,7 @@ select, input[type=date], input[type=text] {
 .tries { display: flex; flex-direction: column; gap: .25em; }
 .try { display: flex; gap: .5em; align-items: baseline; flex-wrap: wrap; }
 .try .resp { font-weight: 600; }
-.try .note { color: var(--muted); font-size: .85em; white-space: pre-line; }
+.try .note { color: var(--muted); font-size: .85em; white-space: pre-line; unicode-bidi: plaintext; text-align: start; }
 .weak td { background: #fff8f8; }
 
 .heatmap { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 14px); gap: 3px; direction: ltr; overflow-x: auto; padding-bottom: .3em; }
@@ -112,6 +112,18 @@ select, input[type=date], input[type=text] {
 .heatmap .day.l3 { background: #4bb474; }
 .heatmap .day.l4 { background: var(--good); }
 .heatmap .day.future { background: transparent; }
+.heatmap .day.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+.heatmap-months { display: grid; grid-auto-flow: column; grid-auto-columns: 17px; direction: ltr; font-size: .7em; color: var(--muted); height: 1.2em; overflow: hidden; }
+.legend { display: flex; align-items: center; gap: .4em; flex-wrap: wrap; font-size: .8em; color: var(--muted); margin-top: .6em; }
+.legend .day { width: 12px; height: 12px; border-radius: 3px; background: var(--grey-soft); display: inline-block; }
+.legend .day.l1 { background: #cfe9d8; }
+.legend .day.l3 { background: #4bb474; }
+.legend .day.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+.loading { padding: .5em 0; }
+.error { color: var(--bad); }
+.student-card.is-hidden { opacity: .6; }
+.exam a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.status a { color: var(--accent); }
 
 .row-actions { display: flex; gap: .6em; justify-content: flex-end; }
 .overlay { position: fixed; inset: 0; background: rgba(30, 20, 60, .35); display: flex; align-items: center; justify-content: center; z-index: 10; }
@@ -124,6 +136,14 @@ select, input[type=date], input[type=text] {
 
 @media (max-width: 600px) {
   .table { font-size: .85em; }
-  .table th:nth-child(5), .table td:nth-child(5) { display: none; }
+  #sessions-table th:nth-child(5), #sessions-table td:nth-child(5) { display: none; }
+  #mastery-table th:nth-child(5), #mastery-table td:nth-child(5) { display: none; }
   h1 { font-size: 1.25em; }
+  /* one card per question: the tries need the whole width */
+  #attempts-table thead { display: none; }
+  #attempts-table, #attempts-table tbody, #attempts-table tr, #attempts-table td { display: block; width: 100%; }
+  #attempts-table tr { border-bottom: 2px solid var(--line); padding: .4em 0; }
+  #attempts-table td { border: 0; padding: .2em 0; }
+  #attempts-table td[data-label]:before { content: attr(data-label) ": "; color: var(--muted); font-size: .85em; }
+  #attempts-table td[data-label="#"]:before { content: "שאלה "; }
 }

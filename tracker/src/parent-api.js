@@ -3,10 +3,13 @@
 
 import { rebuild } from './fold.js';
 
-/* A session is "abandoned" once it has been quiet this long with no completion. */
+/* A round is "abandoned" once it has been quiet this long with no completion -
+   quiet since her last answer, not since it started. */
 const ABANDON_AFTER_MS = 30 * 60 * 1000;
 
-const statusSql = `CASE WHEN s.status = 'in_progress' AND s.started_at < ? THEN 'abandoned' ELSE s.status END AS status`;
+const statusSql = `CASE WHEN s.status = 'in_progress'
+    AND COALESCE((SELECT MAX(a.resolved_at) FROM attempts a WHERE a.session_id = s.id), s.started_at) < ?
+  THEN 'abandoned' ELSE s.status END AS status`;
 
 export async function parentApi({ request, env, url, person, now, json, readJson }) {
   const db = env.DB;
@@ -14,6 +17,7 @@ export async function parentApi({ request, env, url, person, now, json, readJson
   const method = request.method;
   const family = person.family_id;
   const quietBefore = new Date(Date.parse(now) - ABANDON_AFTER_MS).toISOString();
+  const today = now.slice(0, 10);
 
   /* a student in this family, or null */
   const student = async sub => db.prepare(
@@ -31,6 +35,10 @@ export async function parentApi({ request, env, url, person, now, json, readJson
                  AND s.started_at >= ?) AS duration_7d_ms
        FROM people p WHERE p.family_id = ? ORDER BY p.role, p.created_at`)
       .bind(weekAgo(now), weekAgo(now), family).all();
+    for (const p of results) {
+      p.streak = await streakOf(db, p.sub, today);
+      p.next_exam = await nextExamOf(db, p.sub, today);
+    }
     return json({ students: results, me: person.sub });
   }
 
@@ -104,34 +112,7 @@ export async function parentApi({ request, env, url, person, now, json, readJson
     if (!await student(sub)) return json({ error: 'not found' }, 404);
     const unit = await db.prepare('SELECT title, definition FROM activities WHERE app = ? AND id = ?')
       .bind(app, unitId).first();
-    const { results: items } = await db.prepare(
-      `SELECT id, title, definition FROM activities WHERE app = ? AND kind = 'item' AND parent_id = ?`)
-      .bind(app, unitId).all();
-    // per item, across every session of this unit: how many times, how often
-    // right first time, and the last few results newest first
-    const { results: attempts } = await db.prepare(
-      `SELECT a.item_id, a.seq, a.session_id, a.presented_at, a.resolved_at, a.tries,
-              a.first_try_correct, a.success, a.final_result, a.response, s.exercise_id, s.started_at
-       FROM attempts a JOIN sessions s ON s.id = a.session_id
-       WHERE a.student = ? AND a.app = ? AND a.unit_id = ? AND s.deleted = 0 AND a.tries > 0
-       ORDER BY a.resolved_at DESC`)
-      .bind(sub, app, unitId).all();
-    const byItem = new Map();
-    for (const a of attempts) {
-      const e = byItem.get(a.item_id) || { item_id: a.item_id, seen: 0, first_try_correct: 0, success: 0, recent: [], last_at: null };
-      e.seen++;
-      e.first_try_correct += a.first_try_correct || 0;
-      e.success += a.success || 0;
-      if (e.recent.length < 5) e.recent.push({ result: a.final_result, first_try: !!a.first_try_correct, at: a.resolved_at, exercise: a.exercise_id, response: a.response });
-      e.last_at = e.last_at || a.resolved_at;
-      byItem.set(a.item_id, e);
-    }
-    const defs = new Map(items.map(i => [i.id.slice(unitId.length + 1), i]));
-    const mastery = [...new Set([...defs.keys(), ...byItem.keys()])].map(itemId => {
-      const def = defs.get(itemId);
-      const stat = byItem.get(itemId) || { item_id: itemId, seen: 0, first_try_correct: 0, success: 0, recent: [], last_at: null };
-      return { ...stat, title: def ? def.title : itemId, definition: def ? JSON.parse(def.definition) : null };
-    });
+    const mastery = await masteryOf(db, sub, app, unitId);
     return json({
       unit: unit ? { title: unit.title, definition: JSON.parse(unit.definition) } : null,
       items: mastery,
@@ -188,3 +169,71 @@ const parseJsonColumns = cols => row => {
   }
   return out;
 };
+
+/* Consecutive practice days ending today or yesterday. */
+async function streakOf(db, sub, today) {
+  const { results } = await db.prepare(
+    `SELECT DISTINCT local_date FROM sessions WHERE student = ? AND deleted = 0
+     ORDER BY local_date DESC LIMIT 400`).bind(sub).all();
+  const days = new Set(results.map(r => r.local_date));
+  let d = new Date(today + 'T00:00:00Z');
+  if (!days.has(today)) d.setUTCDate(d.getUTCDate() - 1);   // today isn't over yet
+  let streak = 0;
+  while (days.has(d.toISOString().slice(0, 10))) { streak++; d.setUTCDate(d.getUTCDate() - 1); }
+  return streak;
+}
+
+/* The unit with the nearest exam still ahead that this child has practised,
+   with how well she knows it - the "what should she do tonight" line. */
+async function nextExamOf(db, sub, today) {
+  const row = await db.prepare(
+    `SELECT s.app, s.unit_id, u.title, json_extract(u.definition, '$.examDate') AS exam_date
+     FROM sessions s JOIN activities u ON u.app = s.app AND u.id = s.unit_id
+     WHERE s.student = ? AND s.deleted = 0 AND json_extract(u.definition, '$.examDate') >= ?
+     GROUP BY s.app, s.unit_id ORDER BY exam_date LIMIT 1`).bind(sub, today).first();
+  if (!row) return null;
+  const items = await masteryOf(db, sub, row.app, row.unit_id);
+  const seen = items.filter(i => i.seen);
+  return {
+    app: row.app, unit_id: row.unit_id, title: row.title, exam_date: row.exam_date,
+    items: items.length,
+    known: seen.filter(i => i.first_try_correct / i.seen >= 0.5).length,
+    unseen: items.length - seen.length,
+    weak: seen.filter(i => i.first_try_correct / i.seen < 0.5).length,
+  };
+}
+
+/* Per item of one unit, across every round of it: how many times, how often
+   right first time, and the last few results newest first. */
+async function masteryOf(db, sub, app, unitId) {
+  const { results: items } = await db.prepare(
+    `SELECT id, title, definition FROM activities WHERE app = ? AND kind = 'item' AND parent_id = ?`)
+    .bind(app, unitId).all();
+  const { results: attempts } = await db.prepare(
+    `SELECT a.item_id, a.resolved_at, a.first_try_correct, a.success, a.final_result, a.response,
+            s.exercise_id, e.title AS exercise_title
+     FROM attempts a JOIN sessions s ON s.id = a.session_id
+     LEFT JOIN activities e ON e.app = s.app AND e.id = 'exercise:' || s.exercise_id
+     WHERE a.student = ? AND a.app = ? AND a.unit_id = ? AND s.deleted = 0 AND a.tries > 0
+     ORDER BY a.resolved_at DESC`)
+    .bind(sub, app, unitId).all();
+  const byItem = new Map();
+  for (const a of attempts) {
+    const e = byItem.get(a.item_id) || { item_id: a.item_id, seen: 0, first_try_correct: 0, success: 0, recent: [], last_at: null };
+    e.seen++;
+    e.first_try_correct += a.first_try_correct || 0;
+    e.success += a.success || 0;
+    if (e.recent.length < 5) {
+      e.recent.push({ result: a.final_result, first_try: !!a.first_try_correct, at: a.resolved_at,
+        exercise: a.exercise_title || a.exercise_id, response: a.response });
+    }
+    e.last_at = e.last_at || a.resolved_at;
+    byItem.set(a.item_id, e);
+  }
+  const defs = new Map(items.map(i => [i.id.slice(unitId.length + 1), i]));
+  return [...new Set([...defs.keys(), ...byItem.keys()])].map(itemId => {
+    const def = defs.get(itemId);
+    const stat = byItem.get(itemId) || { item_id: itemId, seen: 0, first_try_correct: 0, success: 0, recent: [], last_at: null };
+    return { ...stat, title: def ? def.title : itemId, definition: def ? JSON.parse(def.definition) : null };
+  });
+}

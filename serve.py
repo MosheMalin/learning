@@ -31,7 +31,10 @@ DATA_FILE = os.path.join(HERE, 'dev-lists.json')
 EVENTS_FILE = os.path.join(HERE, 'dev-events.jsonl')
 SDK_FILE = os.path.join(HERE, 'tracker', 'public', 'learning', 'track', 'v1', 'tracker.js')
 TRACKER_DEV = 'http://localhost:8787'
-TRACKER_PREFIXES = ('/learning/track/', '/learning/parent')
+# mirrors TRACKER_PREFIXES in router-worker/src/index.js
+TRACKER_PREFIXES = ('/learning/track/', '/learning/parent/')
+# the cookie values the tracker's dev environment knows (DEV_SESSIONS in tracker/wrangler.toml)
+DEV_SIDS = ('dev', 'kid2', 'parent')
 DEV_USER = {'sub': 'dev', 'email': 'dev@local', 'name': 'משתמש פיתוח', 'picture': ''}
 
 # in-memory stand-in for the KV sentence bank: {listId: {word: {...}}}
@@ -76,7 +79,8 @@ class Handler(SimpleHTTPRequestHandler):
         self._skip_nocache = False
 
     def has_session(self):
-        return 'sid=dev' in (self.headers.get('Cookie') or '')
+        cookies = dict(c.strip().split('=', 1) for c in (self.headers.get('Cookie') or '').split(';') if '=' in c)
+        return cookies.get('sid') in DEV_SIDS
 
     def read_body(self):
         length = int(self.headers.get('Content-Length') or 0)
@@ -130,6 +134,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._skip_nocache = False
             return
         if path == '/learning/track/v1/events' and self.command == 'POST':
+            if not self.has_session():   # exactly what production answers
+                return self.send_json({'error': 'not logged in'}, 401)
             try:
                 batch = json.loads(body or b'{}')
             except ValueError:
@@ -206,6 +212,12 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(body or b'{}') or {}
             return self.send_json(self.fake_check(data.get('word', ''),
                                                   data.get('sentence', '')))
+        if path == '/api/sentence-fits':
+            # the real route asks Claude whether another list word fits the gap;
+            # the demo frames fit any word, so say yes
+            if not self.has_session():
+                return self.send_json({'error': 'not logged in'}, 401)
+            return self.send_json({'fits': True})
         self.send_error(404)
 
     def missing_words(self, list_id, bank):

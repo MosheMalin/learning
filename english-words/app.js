@@ -20,7 +20,20 @@ let currentUser = null; // {sub, email, name, picture} when signed in
 const APP_VERSION = (() => {
   try { return new URL(document.currentScript.src).searchParams.get('v'); } catch { return null; }
 })();
-const tracker = window.Tracker ? Tracker.init({ app: 'english-words', appVersion: APP_VERSION }) : null;
+let tracker = null;
+/* The SDK script loads without blocking the app, so it is bound the first
+   time it is needed; it is told who is signed in, and never posts otherwise. */
+function getTracker() {
+  if (!tracker && window.Tracker) {
+    tracker = Tracker.init({ app: 'english-words', appVersion: APP_VERSION });
+    tracker.setUser(currentUser ? currentUser.sub : null);
+  }
+  return tracker;
+}
+function syncTrackerUser() {
+  const t = getTracker();
+  if (t) t.setUser(currentUser ? currentUser.sub : null);
+}
 
 /* the mode's name as the buttons show it - one copy, in the HTML */
 function modeTitle(mode) {
@@ -37,15 +50,26 @@ function promptOf(mode, word) {
   return { text: word.en, he: word.he };            // write
 }
 
-/* one submitted answer for the current question */
-function reportAnswer(result, { response, judgedBy = 'rule', feedback } = {}) {
-  if (!practice || !practice.track) return;
+/* The one rule for the point: a word scores once, on its first try. Both the
+   summary's count and what the tracker is told come from here. */
+function awardPoint() {
+  if (!practice.firstTry) return 0;
+  practice.correctCount++;
+  return 1;
+}
+
+/* Which question an answer belongs to, fixed at the moment she submits - a
+   judge can take seconds, and the verdict must not land on the next word. */
+function submission() {
   const { index, queue } = practice;
-  practice.track.answered(index + 1, normEn(queue[index].en), {
-    response, result, judgedBy, feedback,
-    // the point is only ever given on the first try - the rule the summary uses
-    score: result === 'correct' && practice.firstTry ? 1 : 0,
-    maxScore: 1,
+  return { seq: index + 1, item: normEn(queue[index].en), submittedAt: Date.now() };
+}
+
+/* one submitted answer; `score` is what awardPoint() gave, 0 otherwise */
+function reportAnswer(sub, result, { response, judgedBy = 'rule', feedback, score = 0 } = {}) {
+  if (!practice || !practice.track) return;
+  practice.track.answered(sub.seq, sub.item, {
+    response, result, judgedBy, feedback, score, maxScore: 1, submittedAt: sub.submittedAt,
   });
 }
 
@@ -92,6 +116,8 @@ const screens = {
 };
 
 function show(name) {
+  // leaving a round from its screen, by whatever button, is giving it up
+  if (name !== 'practice' && !screens.practice.hidden && practice && practice.track) practice.track.abandoned();
   Object.values(screens).forEach(s => s.hidden = true);
   screens[name].hidden = false;
   document.body.classList.toggle('typing-screen', name === 'editor' || name === 'practice');
@@ -107,8 +133,6 @@ document.getElementById('app-title').addEventListener('click', () => {
 document.querySelectorAll('.back-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     stopSpeech();
-    // leaving a round from its own screen is giving it up
-    if (!screens.practice.hidden && practice && practice.track) practice.track.abandoned();
     const target = btn.dataset.back;
     if (target === 'home') { renderHome(); show('home'); }
     else if (target === 'list') { renderListView(); show('list'); }
@@ -641,6 +665,8 @@ let practice = null; // { mode, queue, index, correct, wrong, listId }
 function startPractice(mode, words, { retryOf = null } = {}) {
   if (!words || words.length === 0) return;
   stopSpeech();
+  // a round started from the summary is over; one started over a live round gives it up
+  if (practice && practice.track) practice.track.abandoned();
   practice = {
     mode,
     listId: currentListId,
@@ -653,7 +679,8 @@ function startPractice(mode, words, { retryOf = null } = {}) {
     track: null,   // the tracker's handle for this round, when tracking is on
   };
   const list = getList(currentListId);
-  practice.track = tracker && tracker.session({
+  const t = getTracker();
+  practice.track = t && t.session({
     exercise: { id: mode, title: modeTitle(mode), interaction: mode === 'write' ? 'long-fill-in' : 'fill-in' },
     unit: list ? {
       id: list.id, kind: 'wordlist', title: list.name, examDate: list.examDate || null,
@@ -886,15 +913,24 @@ function otherListWord(answer) {
   return match ? match.en : null;
 }
 
+/* a fetch that gives up, so a judge that never answers can't hold her */
+function fetchWithTimeout(url, init, ms = 25000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { ...init, signal: ctl.signal }).finally(() => clearTimeout(timer));
+}
+
+/* true / false from the judge, null when it could not be reached */
 async function sentenceFits(sentence, word) {
   try {
-    const r = await fetch('api/sentence-fits', {
+    const r = await fetchWithTimeout('api/sentence-fits', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ listId: practice.listId, sentence, word }),
     });
-    return r.ok && (await r.json()).fits === true;
-  } catch { return false; }
+    if (!r.ok) return null;
+    return (await r.json()).fits === true;
+  } catch { return null; }
 }
 
 async function checkAnswer() {
@@ -906,6 +942,7 @@ async function checkAnswer() {
   const word = queue[index];
   const answer = answerInput.value;
   if (!answer.trim()) { answerInput.focus(); return; }
+  const sub = submission();
 
   const expectEn = mode !== 'en2he';
   // filling a gap: any word from the list that fits the sentence is right
@@ -919,17 +956,28 @@ async function checkAnswer() {
   if (!ok && mode === 'fill') {
     const alt = otherListWord(answer);
     if (alt) {
-      judgedBy = 'llm';
       practice.checking = true;
       btnCheck.disabled = true;
       btnCheck.textContent = 'בודקים... ⏳';
+      btnNext.hidden = true;
       feedbackEl.hidden = false;
       feedbackEl.className = 'feedback';
       feedbackEl.textContent = 'רגע, בודקים אם גם זה מתאים... 🤔';
-      ok = await sentenceFits(word.sentence, alt);
+      const fits = await sentenceFits(word.sentence, alt);
       practice.checking = false;
       btnCheck.disabled = false;
       btnCheck.textContent = 'בדיקה ✔';
+      btnNext.hidden = false;
+      if (fits === null) {
+        // the judge is away: neither right nor wrong, and she can carry on
+        reportAnswer(sub, 'unjudged', { response: answer, judgedBy: 'llm' });
+        feedbackEl.className = 'feedback almost';
+        feedbackEl.textContent = 'לא הצלחנו לבדוק את המילה הזאת עכשיו 😕 אפשר להמשיך הלאה';
+        answerInput.focus();
+        return;
+      }
+      judgedBy = 'llm';
+      ok = fits;
       // remember it here too, so the same round won't ask twice
       if (ok) word.accept.push(alt);
     }
@@ -939,10 +987,10 @@ async function checkAnswer() {
   btnNext.hidden = false;
 
   if (ok) {
-    reportAnswer('correct', { response: answer, judgedBy });
+    const point = awardPoint();
+    reportAnswer(sub, 'correct', { response: answer, judgedBy, score: point });
     practice.answered = true;
-    if (practice.firstTry) {
-      practice.correctCount++;
+    if (point) {
       feedbackEl.textContent = pick(praise);
       burstConfetti(12);
     } else {
@@ -967,7 +1015,7 @@ async function checkAnswer() {
   const dist = minDistance(answer, mode === 'fill' ? reveal : stored, norm);
   const mainLen = norm((mode === 'fill' ? reveal : stored).split(/[,/]/)[0]).length;
   const minor = dist === 1 || (dist === 2 && mainLen >= 6);
-  reportAnswer(minor ? 'almost' : 'wrong', { response: answer, judgedBy });
+  reportAnswer(sub, minor ? 'almost' : 'wrong', { response: answer, judgedBy });
 
   answerInput.classList.remove('wrong', 'almost');
   void answerInput.offsetWidth; // restart the shake animation
@@ -1009,6 +1057,7 @@ document.addEventListener('keydown', e => {
 
 function nextQuestion() {
   if (practice.index >= practice.queue.length) return; // round already finished
+  if (practice.checking) return;      // a verdict is on its way: it belongs to this word
   snapshot();
   if (practice.index + 1 >= practice.queue.length) {
     practice.index++;
@@ -1038,14 +1087,16 @@ async function checkWrittenSentence() {
   const text = sentenceInput.value.trim();
   if (!text) { sentenceInput.focus(); return; }
   if (practice.checking) return;
+  const sub = submission();
 
   feedbackEl.hidden = false;
-  btnNext.hidden = false;
 
   // she has to actually use the word - no need to ask the server about that
   if (!usesWord(text, word.en)) {
-    reportAnswer('wrong', { response: text, feedback: `המילה ${word.en} לא מופיעה במשפט` });
+    const note = `צריך להשתמש במילה ${word.en} בתוך המשפט 🙂`;
+    reportAnswer(sub, 'wrong', { response: text, feedback: note });
     markWrong(word);
+    btnNext.hidden = false;
     feedbackEl.className = 'feedback bad';
     feedbackEl.innerHTML = `צריך להשתמש במילה
       <span class="correct-answer">${escapeHtml(word.en)}</span> בתוך המשפט 🙂`;
@@ -1054,15 +1105,17 @@ async function checkWrittenSentence() {
     return;
   }
 
+  // while Claude reads, "next" waits: the verdict belongs to this word
   practice.checking = true;
   btnCheck.disabled = true;
   btnCheck.textContent = 'בודקים... ⏳';
+  btnNext.hidden = true;
   feedbackEl.className = 'feedback';
   feedbackEl.textContent = 'קוראים את המשפט שלך... 👀';
 
   let res = null;
   try {
-    const r = await fetch('api/sentence-check', {
+    const r = await fetchWithTimeout('api/sentence-check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ word: word.en, sentence: text }),
@@ -1073,10 +1126,11 @@ async function checkWrittenSentence() {
   practice.checking = false;
   btnCheck.disabled = false;
   btnCheck.textContent = 'בדיקה ✔';
+  btnNext.hidden = false;
 
   // couldn't reach the marker: don't score it either way, just let her carry on
   if (!res || !res.verdict) {
-    reportAnswer('unjudged', { response: text, judgedBy: 'llm' });
+    reportAnswer(sub, 'unjudged', { response: text, judgedBy: 'llm' });
     feedbackEl.className = 'feedback almost';
     feedbackEl.textContent = 'לא הצלחנו לבדוק את המשפט עכשיו 😕 אפשר להמשיך הלאה';
     return;
@@ -1097,7 +1151,7 @@ async function checkWrittenSentence() {
   const note = (res.feedback || '') + (correction ? `\n✔ ${res.correction}` : '');
 
   if (wordOk && res.verdict !== 'great') {
-    reportAnswer('almost', { response: text, judgedBy: 'llm', feedback: note });
+    reportAnswer(sub, 'almost', { response: text, judgedBy: 'llm', feedback: note });
     // not a mistake against her word list, so it never reaches practice.wrong -
     // but it isn't finished either, and she can put it right and turn it green
     sentenceInput.classList.remove('wrong', 'almost');
@@ -1110,16 +1164,12 @@ async function checkWrittenSentence() {
   }
 
   if (wordOk && res.verdict === 'great') {
-    reportAnswer('correct', { response: text, judgedBy: 'llm', feedback: note });
+    const point = awardPoint();
+    reportAnswer(sub, 'correct', { response: text, judgedBy: 'llm', feedback: note, score: point });
     practice.answered = true;
     practice.written[index] = text;
     setProgress((index + 1) / queue.length);
-    if (practice.firstTry) {
-      practice.correctCount++;
-      burstConfetti(12);
-    } else {
-      burstConfetti(6);
-    }
+    burstConfetti(point ? 12 : 6);
     feedbackEl.className = 'feedback good';
     feedbackEl.innerHTML = `${escapeHtml(res.feedback || pick(praise))}`;
     sentenceInput.classList.remove('wrong', 'almost');
@@ -1131,7 +1181,7 @@ async function checkWrittenSentence() {
   }
 
   // the word itself is wrong, missing or misspelled: this is the one that counts
-  reportAnswer('wrong', { response: text, judgedBy: 'llm', feedback: note });
+  reportAnswer(sub, 'wrong', { response: text, judgedBy: 'llm', feedback: note });
   markWrong(word);
   sentenceInput.classList.remove('wrong', 'almost');
   void sentenceInput.offsetWidth; // restart the shake
@@ -1553,6 +1603,7 @@ const authArea = document.getElementById('auth-area');
 let gisReady = false;
 
 function renderAuthUi() {
+  syncTrackerUser();
   if (currentUser) {
     authArea.innerHTML = `
       ${currentUser.picture ? `<img class="avatar" src="${escapeHtml(currentUser.picture)}" alt="">` : ''}

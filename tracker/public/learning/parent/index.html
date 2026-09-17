@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>מעקב הורים · הלמידה של המשפחה</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
@@ -23,12 +23,14 @@
       <p>מה כל ילד תרגל, שאלה אחרי שאלה, בכל האפליקציות של המשפחה.</p>
       <div id="gsi-btn"></div>
       <p id="login-note" class="muted"></p>
+      <button id="gate-logout" class="small-btn" hidden>יציאה והתחברות בחשבון אחר</button>
     </div>
   </section>
 
   <!-- home: one card per student -->
   <section id="screen-home" class="screen" hidden>
     <div id="students" class="cards"></div>
+    <p class="row-actions"><button id="toggle-hidden" class="small-btn" hidden></button></p>
     <p class="muted small">ילד מופיע כאן אחרי התרגול הראשון שלו. הורה נוסף: להוסיף את הכתובת ל־PARENT_EMAILS, או לסמן אותו כאן כהורה.</p>
   </section>
 
@@ -48,12 +50,14 @@
     </div>
     <div class="card">
       <h2>ימי תרגול</h2>
+      <div id="heatmap-months" class="heatmap-months"></div>
       <div id="heatmap" class="heatmap"></div>
+      <div class="legend"><span class="day"></span> בלי תרגול <span class="day l1"></span> תרגול אחד <span class="day l3"></span> כמה <span class="day today"></span> היום</div>
     </div>
     <div class="card">
       <h2>תרגולים</h2>
       <table class="table" id="sessions-table">
-        <thead><tr><th>מתי</th><th>מה</th><th>איך</th><th>ציון</th><th>זמן</th><th></th></tr></thead>
+        <thead><tr><th>מתי</th><th>מה</th><th>איך</th><th>ציון</th><th>זמן</th></tr></thead>
         <tbody></tbody>
       </table>
       <p id="sessions-empty" class="muted" hidden>עוד אין תרגולים בתקופה הזאת.</p>
@@ -75,6 +79,7 @@
         <thead><tr><th>מילה</th><th>פעמים</th><th>נכון מיד</th><th>לאחרונה</th><th>נראה לאחרונה</th></tr></thead>
         <tbody></tbody>
       </table>
+      <div class="legend"><span class="dot correct"></span> נכון מיד <span class="dot retry"></span> נכון בניסיון נוסף <span class="dot almost"></span> כמעט <span class="dot wrong"></span> לא נכון <span class="dot unjudged"></span> לא נבדק · החדש ביותר משמאל</div>
     </div>
   </section>
 
@@ -84,7 +89,7 @@
     <p id="session-sub" class="muted"></p>
     <div class="card">
       <table class="table" id="attempts-table">
-        <thead><tr><th>#</th><th>השאלה</th><th>התשובות שלה</th><th>תוצאה</th><th>זמן</th></tr></thead>
+        <thead><tr><th>#</th><th>השאלה</th><th>התשובות שלה</th><th>תוצאה</th><th>זמן לתשובה</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -109,6 +114,6 @@
   </div>
 </div>
 
-<script src="app.js?v=1"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

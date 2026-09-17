@@ -4,6 +4,7 @@
 //   POST /learning/track/v1/auth/login      Google credential -> session cookie (for the dashboard)
 //   POST /learning/track/v1/auth/logout
 //   GET  /learning/track/v1/auth/me
+//   GET  /learning/track/v1/auth/config     the public Google client id, so no page has to copy it
 //   GET  /learning/track/v1/tracker.js      the client SDK (a static asset)
 //   GET  /learning/parent/                  the parent dashboard (static assets)
 //   *    /learning/parent/api/*             the parent API (parents only)
@@ -18,6 +19,10 @@ import { validateBatch, MAX_BODY_BYTES } from './ingest.js';
 import { ingestEvents } from './fold.js';
 import { ensurePerson } from './people.js';
 import { parentApi } from './parent-api.js';
+
+/* batches one student may post per minute - a stuck client, not a child, is
+   the only thing that gets near it */
+const BATCHES_PER_MINUTE = 100;
 
 const json = (obj, status = 200, headers = {}) =>
   new Response(JSON.stringify(obj), {
@@ -44,6 +49,16 @@ async function readJson(request) {
   try { return { body: JSON.parse(text) }; } catch { return { error: 'bad json' }; }
 }
 
+/* the same shape as english-words' daily Claude budget: a KV counter per
+   student per minute */
+async function withinRate(env, sub, now) {
+  const key = `rate:${sub}:${now.slice(0, 16)}`;
+  const used = Number(await env.LEARNING_KV.get(key)) || 0;
+  if (used >= BATCHES_PER_MINUTE) return false;
+  await env.LEARNING_KV.put(key, String(used + 1), { expirationTtl: 120 });
+  return true;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -54,6 +69,9 @@ export default {
     if (path.startsWith('/learning/track/v1/')) {
       const route = path.slice('/learning/track/v1/'.length);
 
+      if (route === 'auth/config' && method === 'GET') {
+        return json({ clientId: env.GOOGLE_CLIENT_ID || '' });
+      }
       if (route === 'auth/login' && method === 'POST') {
         const { body, error } = await readJson(request);
         if (error) return json({ error }, error === 'too large' ? 413 : 400);
@@ -74,18 +92,20 @@ export default {
         });
       }
 
-      const user = await currentUser(request, env);
       if (route === 'auth/me' && method === 'GET') {
+        const user = await currentUser(request, env);
         if (!user) return json({ error: 'not logged in' }, 401);
         const person = await ensurePerson(env.DB, env, user, now);
         return json({ ...user, role: person.role });
       }
       if (route === 'events' && method === 'POST') {
+        const user = await currentUser(request, env);
         if (!user) return json({ error: 'not logged in' }, 401);
+        if (!await withinRate(env, user.sub, now)) return json({ error: 'too many batches' }, 429);
         const { body, error } = await readJson(request);
         if (error) return json({ error }, error === 'too large' ? 413 : 400);
         const v = validateBatch(body);
-        if (!v.ok) return json({ error: v.error }, 400);
+        if (!v.ok) return json({ error: v.error, index: v.index }, 400);
         const person = await ensurePerson(env.DB, env, user, now);
         const ctx = {
           student: person.sub, app: v.app, appVersion: v.appVersion, device: v.device, receivedAt: now,
@@ -93,6 +113,7 @@ export default {
         const result = await ingestEvents(env.DB, ctx, v.events);
         return json(result);
       }
+      if (method === 'GET' && env.ASSETS) return env.ASSETS.fetch(request);   // tracker.js
       return json({ error: 'not found' }, 404);
     }
 

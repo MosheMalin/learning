@@ -66,7 +66,11 @@ Per **try**:
 Per **attempt**, derived from its tries:
 
 - `tries` — count.
-- `firstTryCorrect` — the number the app itself calls "correct" today.
+- `firstTryCorrect` — the number the app itself calls "correct" today. It is
+  derived from the app's own `score` (the point was given ⇔ first-try correct),
+  not from the first try's `result`: the app spends no first try on an
+  unjudged answer or on a sentence that was right but unfinished, and the
+  tracker must not either. Without scores, the first *judged* try decides.
 - `success` — correct on any try (SCORM/xAPI `success`).
 - `finalResult` — result of the last try (so "gave up after two wrongs" is visible).
 - `score / maxScore` — as the app reports it; english-words gives the point only
@@ -147,7 +151,7 @@ One `POST` carries a batch. This is the "common interface":
   "events": [
     {
       "id": "6d1c…", "type": "session.started", "at": "2026-09-16T17:02:11.123Z",
-      "session": "9b0e…",
+      "session": "9b0e…", "localDate": "2026-09-16",
       "exercise": { "id": "he2en", "title": "עברית ← אנגלית", "interaction": "fill-in" },
       "unit": {
         "id": "l1726081234567", "kind": "wordlist", "title": "רשימה 12",
@@ -190,7 +194,7 @@ Event types, version 1:
 | `item.answered` | every submitted try | seq, item, try number, response, result, judgedBy, score/maxScore, feedback, latency |
 | `item.skipped` | the child moved on without a correct answer *and* the app wants to say so explicitly | seq, item. (Optional; the fold also infers "gave up" from the last try.) |
 | `session.completed` | the summary screen | totals as the app computed them |
-| `session.abandoned` | the app can tell the child left (back button) | — . Also inferred server-side: no event for 30 minutes and no completion ⇒ abandoned. |
+| `session.abandoned` | the app can tell the child left (any way off the practice screen, a new round started over it, or the page going away) | — . Also inferred server-side when read: no answer for 30 minutes and no completion ⇒ abandoned. A page that comes back from the cache and finishes still reports `session.completed`, which wins. |
 
 The `interaction` field on an exercise uses xAPI's `cmi.interaction` types:
 `fill-in` (all four spelling modes), `long-fill-in` (write a sentence, judged by
@@ -297,25 +301,31 @@ through `<unit_id>/<item_id>` in `activities`. What the child saw for a question
 is not copied into `attempts`: the session view reads it from the
 `item.presented` event.
 
-Folding rules (on ingest, one statement at a time; every step is an upsert, so
-a request that dies halfway leaves stored-but-unfolded events that `rebuild`
-repairs):
+Folding rules (on ingest, one statement at a time). Every step is an upsert;
+an event is folded first and recorded in `events` last, so a request that dies
+halfway leaves the event unknown and the client's resend folds it again. Any
+read-modify-write (appending a try, summarising an attempt) is one SQL
+statement, so two requests folding the same attempt at once lose nothing:
 
 1. `INSERT OR IGNORE` into `events`. If nothing was inserted, the event was seen
    before: skip its fold.
 2. `session.started` → upsert `sessions` (status `in_progress`) and upsert the
    unit, exercise and every item into `activities`.
 3. `item.presented` → upsert `attempts` with `presented_at`.
-4. `item.answered` → read the row's `tries_json`, add this try if its number is
-   new, sort by try, recompute `tries`, `first_try_correct`, `success`,
-   `final_result`, `response`, `score`, `latency_ms`, `feedback`; bump the
-   session's `answered_count` / `correct_*` counters by recounting its attempts.
+4. `item.answered` → append this try to `tries_json` unless its number is
+   already there (one statement); recompute `tries`, `first_try_correct`,
+   `success`, `final_result`, `response`, `score`, `latency_ms`, `feedback`
+   from the stored JSON (one statement); recount the session's
+   `answered_count` / `correct_*` from its attempts (one statement).
 5. `session.completed` → set `ended_at`, `status`, `duration_ms`, and the totals
    the app reported (kept alongside the recount, so a disagreement is visible).
 6. `session.abandoned` → `status = abandoned`, `ended_at`.
 
 `POST /admin/rebuild` truncates the three derived tables and replays `events` in
-`at` order. Parent-only.
+`at` order, then re-marks the sessions a parent had hidden. Parent-only.
+
+`activities` is keyed by `(app, id)` with no family scope: fine with one family,
+to be scoped before a second one exists (phase 5).
 
 ## 5. Components
 
@@ -332,8 +342,13 @@ shared:  LEARNING_KV (sessions, already shared by name)   D1 learning-tracker   
 ### 5.1 `tracker/` — one Worker
 
 - **Ingest** `POST /learning/track/v1/events` — cookie auth via the same `sid`
-  session in `LEARNING_KV`; caps: 200 events per batch, 16 KB per event, 100
-  batches per student per minute. Returns `{accepted, duplicates}`.
+  session in `LEARNING_KV`; caps: 200 events per batch, 16 KB per event (64 KB
+  for `session.started`, at most 400 items), 100 batches per student per minute
+  (a KV counter, like the apps' daily Claude budget), numbers bounded, `device`
+  trimmed to four short strings. Returns `{accepted, duplicates}`; a refused
+  batch names the offending event's `index`, and the SDK drops only that one.
+- **Auth for the dashboard** `POST auth/login`, `POST auth/logout`, `GET auth/me`,
+  and `GET auth/config` (the public Google client id, so no page copies it).
 - **Student read API** `GET /learning/track/v1/me/...` — a student's own summary,
   for apps that want to show "the words you got wrong this week" or feed a
   mistakes-first queue. Not needed for the dashboard; cheap to expose.
@@ -372,10 +387,11 @@ holidays) go the same way once the dashboard needs them.
 
 ```js
 const track = Tracker.init({ app: 'english-words', appVersion: APP_VERSION });
+track.setUser(sub);                                     // after sign-in; null on sign-out
 
 const s = track.session({ exercise, unit, params });   // emits session.started, returns a handle
 s.presented(seq, itemId, prompt);
-s.answered(seq, itemId, { try, response, result, judgedBy, score, maxScore, feedback });  // latency computed by the SDK
+s.answered(seq, itemId, { response, result, judgedBy, score, maxScore, feedback, submittedAt });
 s.completed({ score, maxScore, correctFirstTry, correctEventually, itemCount });
 s.abandoned();
 ```
@@ -383,17 +399,23 @@ s.abandoned();
 Behaviour: events go to an in-memory queue mirrored in `localStorage`
 (`tracker-outbox`, capped at ~2000 events); flushed every 2 s, or at 20 events,
 and on `pagehide` / `visibilitychange` with `navigator.sendBeacon` (same origin,
-so the cookie travels). `401` keeps the batch for after sign-in; `4xx` otherwise
-drops the batch and logs; `5xx`/network retries with backoff. An app that is not
-signed in still queues, so a guest round is not lost if she signs in later.
-Nothing the SDK does can break the app: every call is wrapped, failures are
-silent.
+so the cookie travels). Every queued event is stamped with the account that was
+signed in when it happened, and only events stamped with the current account are
+posted: the server attributes a batch to the cookie it arrives with, so a round
+queued under one child must never travel with a sibling's cookie on a shared
+laptop; it waits for its own account. `401` keeps the batch; `400` drops the
+one event the server named; other `4xx` drops the batch; `5xx`/network retries
+with backoff. Latency is measured to the moment she submitted (`submittedAt`),
+not to when a judge answered. The script is loaded `async` and the app binds to
+it lazily, so a slow tracker cannot delay the app. Nothing the SDK does can
+break the app: every call is wrapped, failures are silent.
 
 ### 5.4 Local development and tests
 
-`serve.py` already stubs `/api/*`. It gains a stub for `/learning/track/v1/*`
-that appends batches to `dev-events.jsonl` and serves `tracker.js` from
-`tracker/client/`. Playwright tests get a fixture that captures every batch the
+`serve.py` already stubs `/api/*`. It proxies `/learning/track/*` and
+`/learning/parent/*` to a local `wrangler dev --env dev` when one is running, and
+otherwise stubs them: batches append to `dev-events.jsonl` and `tracker.js` is
+served from `tracker/public/learning/track/v1/`. Playwright tests get a fixture that captures every batch the
 page sends, so the tracking becomes a testable contract: *"a twelve-word round
 with two mistakes emits one `session.started`, twelve `item.presented`, fourteen
 `item.answered`, one `session.completed`, and the fold of those equals 10/12"*.
@@ -413,9 +435,12 @@ The `practice` object already holds everything; five call sites change:
 | `showSummary` | `session.completed` with `correctCount / total` |
 | `btn-back-home` / leaving mid-round | `session.abandoned` |
 
-Item ids are `normWord(en)` (already the bank key); `fill` items are the word
-too, with the sentence in `prompt`, so the mastery view aggregates by word across
-all five modes.
+Item ids are `normEn(en)` (the same normalisation as the answer check); `fill`
+items are the word too, with the sentence in `prompt`, so the mastery view
+aggregates by word across all five modes. The point is awarded in one function
+(`awardPoint`) that both the summary count and the reported `score` use; which
+question an answer belongs to is fixed at the moment she submits, and "next" is
+not offered while a judge is still reading.
 
 ## 7. The parent dashboard (`/learning/parent/`)
 

@@ -105,9 +105,11 @@ async function nextWord(page) {
   await page.click('#btn-next');
 }
 
-/** Everything reported so far, flattened, after forcing the SDK to post. */
+/** Everything reported so far, flattened, once the SDK has posted it all -
+    waiting on the queue, not on luck. */
 async function reported(page, tracked) {
   await page.evaluate(() => window.Tracker ? Tracker.flushAll() : null);
+  await page.waitForFunction(() => !window.Tracker || Tracker.instances.every(t => t.pending() === 0));
   return tracked.flatMap(b => b.events);
 }
 

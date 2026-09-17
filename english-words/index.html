@@ -197,9 +197,10 @@
 
 <div id="confetti-layer"></div>
 <!-- the learning tracker: reports each round to the parent dashboard. Served by
-     the tracker Worker on the family domain; if it is missing, the app simply
-     doesn't report. -->
-<script src="/learning/track/v1/tracker.js"></script>
-<script src="app.js?v=19"></script>
+     the tracker Worker on the family domain; loaded without blocking the app,
+     so if it is missing or slow the app runs the same and simply doesn't report
+     (app.js binds to it lazily). -->
+<script async src="/learning/track/v1/tracker.js"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

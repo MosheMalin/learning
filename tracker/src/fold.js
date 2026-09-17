@@ -1,9 +1,15 @@
 // Folding events into the derived tables.
 //
 // Every fold is an upsert, so events may arrive twice, out of order, or split
-// across requests and the tables end up the same. The one rule that makes
-// that true: nothing here depends on what came before, only on what the row
-// says now plus this event. `rebuild` proves it by replaying the log.
+// across requests and the tables end up the same. Two rules make that true:
+// nothing here depends on what came before, only on what the row says now
+// plus this event; and anything that reads a row and writes it back is a
+// single SQL statement, so two requests folding the same attempt at once
+// cannot lose each other's work. `rebuild` proves it by replaying the log.
+//
+// An event is folded first and recorded in `events` last: if a fold dies
+// halfway the client resends, the event is still unknown, and the fold runs
+// again - which is safe, because it is an upsert.
 //
 // Only the D1 statement API is used (prepare/bind/first/all/run), so the
 // tests run the same code against Node's built-in SQLite.
@@ -23,28 +29,41 @@ const j = v => (v === undefined ? null : JSON.stringify(v));
    not say what day it was for the child. */
 const utcDate = iso => iso.slice(0, 10);
 
-/* Summarise an attempt from its tries. Pure; the only place the meaning of
-   "first try", "success" and the attempt's score is decided. */
-export function summarizeTries(tries) {
-  const sorted = [...tries].sort((a, b) => a.try - b.try);
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  const scores = sorted.map(t => n(t.score)).filter(v => v !== null);
-  const maxes = sorted.map(t => n(t.maxScore)).filter(v => v !== null);
-  return {
-    tries: sorted.length,
-    first_try_correct: first.result === 'correct' ? 1 : 0,
-    success: sorted.some(t => t.result === 'correct') ? 1 : 0,
-    final_result: last.result,
-    response: s(last.response),
-    score: scores.length ? Math.max(...scores) : null,
-    max_score: maxes.length ? Math.max(...maxes) : null,
-    latency_ms: n(first.latencyMs),
-    feedback: s(last.feedback),
-    resolved_at: last.at,
-    tries_json: JSON.stringify(sorted),
-  };
-}
+/* The attempt's summary, computed from its tries_json by SQLite itself in
+   ONE statement - the only place the meaning of these columns is decided.
+
+   first_try_correct follows the app's own scoring, not the try results: the
+   app gives the point (score >= maxScore) exactly when it counts the word as
+   right first time, and it does not spend the first try on an unjudged
+   answer or an unfinished-but-right sentence. Without scores (another app,
+   another day) the first judged try decides. */
+const SUMMARY_SQL = `
+  UPDATE attempts SET
+    tries_json = (SELECT json_group_array(json(value)) FROM
+                   (SELECT value FROM json_each(attempts.tries_json) ORDER BY json_extract(value, '$.try'))),
+    tries = (SELECT COUNT(*) FROM json_each(attempts.tries_json)),
+    first_try_correct = CASE
+      WHEN (SELECT MAX(json_extract(value, '$.maxScore')) FROM json_each(attempts.tries_json)) IS NOT NULL
+       AND (SELECT MAX(json_extract(value, '$.score')) FROM json_each(attempts.tries_json)) IS NOT NULL
+      THEN (SELECT MAX(json_extract(value, '$.score')) FROM json_each(attempts.tries_json))
+           >= (SELECT MAX(json_extract(value, '$.maxScore')) FROM json_each(attempts.tries_json))
+      ELSE COALESCE((SELECT json_extract(value, '$.result') = 'correct' FROM json_each(attempts.tries_json)
+                     WHERE json_extract(value, '$.result') <> 'unjudged'
+                     ORDER BY json_extract(value, '$.try') LIMIT 1), 0)
+    END,
+    success = EXISTS (SELECT 1 FROM json_each(attempts.tries_json) WHERE json_extract(value, '$.result') = 'correct'),
+    final_result = (SELECT json_extract(value, '$.result') FROM json_each(attempts.tries_json)
+                    ORDER BY json_extract(value, '$.try') DESC LIMIT 1),
+    response = (SELECT json_extract(value, '$.response') FROM json_each(attempts.tries_json)
+                ORDER BY json_extract(value, '$.try') DESC LIMIT 1),
+    score = (SELECT MAX(json_extract(value, '$.score')) FROM json_each(attempts.tries_json)),
+    max_score = (SELECT MAX(json_extract(value, '$.maxScore')) FROM json_each(attempts.tries_json)),
+    latency_ms = (SELECT json_extract(value, '$.latencyMs') FROM json_each(attempts.tries_json)
+                  ORDER BY json_extract(value, '$.try') LIMIT 1),
+    feedback = (SELECT json_extract(value, '$.feedback') FROM json_each(attempts.tries_json)
+                ORDER BY json_extract(value, '$.try') DESC LIMIT 1),
+    resolved_at = (SELECT MAX(json_extract(value, '$.at')) FROM json_each(attempts.tries_json))
+  WHERE session_id = ? AND seq = ?`;
 
 async function ensureSession(db, ctx, ev) {
   // a stub, so counters have somewhere to land when session.started is late
@@ -89,6 +108,8 @@ async function foldStarted(db, ctx, ev) {
   const unitId = s(unit.id) || '';
   const exerciseId = s(exercise.id) || '';
   const params = ev.params || {};
+  // a second start for the same id: the newer one describes the round, in
+  // whatever order the two arrive
   await db.prepare(
     `INSERT INTO sessions (id, student, app, unit_id, exercise_id, started_at, local_date, status,
                            item_count, params, app_version, device)
@@ -96,15 +117,16 @@ async function foldStarted(db, ctx, ev) {
      ON CONFLICT(id) DO UPDATE SET
        unit_id = excluded.unit_id, exercise_id = excluded.exercise_id,
        started_at = excluded.started_at, local_date = excluded.local_date,
-       item_count = excluded.item_count, params = excluded.params,
-       app_version = excluded.app_version, device = excluded.device`)
+       item_count = COALESCE(excluded.item_count, sessions.item_count), params = excluded.params,
+       app_version = excluded.app_version, device = excluded.device
+     WHERE excluded.started_at >= sessions.started_at OR sessions.unit_id = ''`)
     .bind(ev.session, ctx.student, ctx.app, unitId, exerciseId, ev.at,
       s(ev.localDate) || utcDate(ev.at), n(params.itemCount), JSON.stringify(params),
       s(ctx.appVersion), j(ctx.device))
     .run();
-  // attempts that arrived before their session know their unit now
-  await db.prepare(`UPDATE attempts SET unit_id = ? WHERE session_id = ? AND unit_id = ''`)
-    .bind(unitId, ev.session).run();
+  // every attempt of the session belongs to the unit the session now names
+  await db.prepare(`UPDATE attempts SET unit_id = (SELECT unit_id FROM sessions WHERE id = ?) WHERE session_id = ?`)
+    .bind(ev.session, ev.session).run();
 
   if (unitId) {
     const { items, ...unitDef } = unit;
@@ -146,32 +168,27 @@ async function foldAnswered(db, ctx, ev) {
      VALUES (?, ?, ?, ?, ?, ?)`)
     .bind(ev.session, ev.seq, ctx.student, ctx.app, unitId, s(ev.item) || '')
     .run();
-  const row = await db.prepare('SELECT tries_json FROM attempts WHERE session_id = ? AND seq = ?')
-    .bind(ev.session, ev.seq).first();
-  const tries = JSON.parse(row.tries_json || '[]');
-  const tryNo = n(ev.try) ?? tries.length + 1;
-  if (!tries.some(t => t.try === tryNo)) {
-    tries.push({
-      try: tryNo,
-      at: ev.at,
-      response: s(ev.response),
-      result: ev.result,
-      judgedBy: JUDGES.has(ev.judgedBy) ? ev.judgedBy : 'rule',
-      score: n(ev.score),
-      maxScore: n(ev.maxScore),
-      latencyMs: n(ev.latencyMs),
-      feedback: s(ev.feedback),
-    });
-  }
-  const sum = summarizeTries(tries);
+  const tryNo = n(ev.try);
+  const record = JSON.stringify({
+    try: tryNo,
+    at: ev.at,
+    response: s(ev.response),
+    result: ev.result,
+    judgedBy: JUDGES.has(ev.judgedBy) ? ev.judgedBy : 'rule',
+    score: n(ev.score),
+    maxScore: n(ev.maxScore),
+    latencyMs: n(ev.latencyMs),
+    feedback: s(ev.feedback),
+  });
+  // append this try unless a try with that number is already there - one
+  // statement, so a concurrent fold of the same attempt cannot drop it
   await db.prepare(
-    `UPDATE attempts SET tries = ?, first_try_correct = ?, success = ?, final_result = ?, response = ?,
-       score = ?, max_score = ?, latency_ms = ?, feedback = ?, resolved_at = ?, tries_json = ?
-     WHERE session_id = ? AND seq = ?`)
-    .bind(sum.tries, sum.first_try_correct, sum.success, sum.final_result, sum.response,
-      sum.score, sum.max_score, sum.latency_ms, sum.feedback, sum.resolved_at, sum.tries_json,
-      ev.session, ev.seq)
+    `UPDATE attempts SET tries_json = json_insert(tries_json, '$[#]', json(?))
+     WHERE session_id = ? AND seq = ?
+       AND NOT EXISTS (SELECT 1 FROM json_each(attempts.tries_json) WHERE json_extract(value, '$.try') = ?)`)
+    .bind(record, ev.session, ev.seq, tryNo)
     .run();
+  await db.prepare(SUMMARY_SQL).bind(ev.session, ev.seq).run();
   await recountSession(db, ev.session);
 }
 
@@ -227,26 +244,30 @@ export async function foldEvent(db, ctx, ev) {
   await FOLDS[ev.type](db, ctx, ev);
 }
 
-/* Store the events of one batch and fold the ones not seen before.
-   Returns { accepted, duplicates }. */
+/* Fold the events of one batch that have not been seen before, recording
+   each one only once its fold has landed. Returns { accepted, duplicates }. */
 export async function ingestEvents(db, ctx, events) {
   let accepted = 0, duplicates = 0;
   for (const ev of events) {
+    const seen = await db.prepare('SELECT 1 AS x FROM events WHERE id = ?').bind(ev.id).first();
+    if (seen) { duplicates++; continue; }
+    await foldEvent(db, ctx, ev);
     const r = await db.prepare(
       `INSERT OR IGNORE INTO events (id, student, app, session_id, type, at, received_at, app_version, device, payload)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(ev.id, ctx.student, ctx.app, ev.session, ev.type, ev.at, ctx.receivedAt,
         s(ctx.appVersion), j(ctx.device), JSON.stringify(ev))
       .run();
-    if (!r.meta || r.meta.changes === 0) { duplicates++; continue; }
-    accepted++;
-    await foldEvent(db, ctx, ev);
+    // a twin request folded it a moment ago: harmless, the fold is an upsert
+    if (r.meta && r.meta.changes === 0) duplicates++; else accepted++;
   }
   return { accepted, duplicates };
 }
 
-/* Throw the derived tables away and fold the whole log again. */
+/* Throw the derived tables away and fold the whole log again. The one thing
+   a parent writes by hand - a hidden session - is carried across. */
 export async function rebuild(db) {
+  const { results: hidden } = await db.prepare('SELECT id FROM sessions WHERE deleted = 1').all();
   for (const t of ['attempts', 'sessions', 'activities']) {
     await db.prepare(`DELETE FROM ${t}`).run();
   }
@@ -258,6 +279,9 @@ export async function rebuild(db) {
       device: row.device ? JSON.parse(row.device) : null, receivedAt: row.received_at,
     };
     await foldEvent(db, ctx, JSON.parse(row.payload));
+  }
+  for (const h of hidden) {
+    await db.prepare('UPDATE sessions SET deleted = 1 WHERE id = ?').bind(h.id).run();
   }
   return results.length;
 }

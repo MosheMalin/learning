@@ -1,10 +1,11 @@
 /* The learning tracker client. One file, no dependencies, loaded by every app:
-     <script src="/learning/track/v1/tracker.js"></script>
+     <script async src="/learning/track/v1/tracker.js"></script>
 
    const tracker = Tracker.init({ app: 'english-words', appVersion: '19' });
+   tracker.setUser(sub);                 // after sign-in; null on sign-out
    const s = tracker.session({ exercise, unit, params });
    s.presented(seq, itemId, prompt);
-   s.answered(seq, itemId, { response, result, judgedBy, score, maxScore, feedback });
+   s.answered(seq, itemId, { response, result, judgedBy, score, maxScore, feedback, submittedAt });
    s.completed({ score, maxScore, correctFirstTry, correctEventually, itemCount });
    s.abandoned();
 
@@ -12,8 +13,14 @@
    two seconds after the last one, at once when twenty are waiting or a
    session ends, and with sendBeacon when the page is hidden or left. A batch
    that fails stays queued; the server ignores an event it has already seen,
-   so resending is always safe. Nothing here can break the app: every entry
-   point swallows its own errors. */
+   so resending is always safe.
+
+   Every queued event is stamped with the account that was signed in when it
+   happened, and only events stamped with the current account are ever posted:
+   the server attributes a batch to the cookie it arrives with, so a round
+   queued under one child must not travel with the next child's cookie on a
+   shared laptop. Nothing here can break the app: every entry point swallows
+   its own errors. */
 (function () {
   'use strict';
 
@@ -69,8 +76,9 @@
     var dev = device();
 
     var outbox = loadOutbox();
+    var user = null;            // the signed-in account; nothing is posted without one
     var timer = null;
-    var inflight = false;
+    var inflight = null;        // the promise of the post in progress
     var backoff = 0;
     var blockedUntil = 0;
     var openSessions = [];
@@ -78,10 +86,16 @@
     function emit(type, fields) {
       var ev = { id: uuid(), type: type, at: new Date().toISOString() };
       for (var k in fields) if (fields[k] !== undefined) ev[k] = fields[k];
-      outbox.push({ app: app, appVersion: appVersion, ev: ev });
+      outbox.push({ app: app, appVersion: appVersion, user: user, ev: ev });
       if (outbox.length > MAX_OUTBOX) outbox.splice(0, outbox.length - MAX_OUTBOX);
       saveOutbox(outbox);
-      scheduleFlush(outbox.length >= FLUSH_AT ? 0 : FLUSH_AFTER_MS);
+      scheduleFlush(sendable().length >= FLUSH_AT ? 0 : FLUSH_AFTER_MS);
+    }
+
+    /* the queued entries that may travel with the current account's cookie */
+    function sendable() {
+      if (!user) return [];
+      return outbox.filter(function (o) { return o.user === user; });
     }
 
     function scheduleFlush(ms) {
@@ -91,60 +105,71 @@
     }
 
     function nextBatch() {
-      if (!outbox.length) return null;
-      var first = outbox[0];
+      var mine = sendable();
+      if (!mine.length) return null;
+      var first = mine[0];
       var events = [];
-      for (var i = 0; i < outbox.length && events.length < BATCH; i++) {
-        if (outbox[i].app === first.app && outbox[i].appVersion === first.appVersion) events.push(outbox[i].ev);
+      for (var i = 0; i < mine.length && events.length < BATCH; i++) {
+        if (mine[i].app === first.app && mine[i].appVersion === first.appVersion) events.push(mine[i].ev);
       }
       return { schema: 1, app: first.app, appVersion: first.appVersion, device: dev, events: events };
     }
 
-    function drop(batch) {
-      var ids = {};
-      batch.events.forEach(function (e) { ids[e.id] = true; });
-      outbox = outbox.filter(function (o) { return !ids[o.ev.id]; });
+    function dropIds(ids) {
+      var set = {};
+      ids.forEach(function (id) { set[id] = true; });
+      outbox = outbox.filter(function (o) { return !set[o.ev.id]; });
       saveOutbox(outbox);
     }
 
     function flush() {
       timer = null;
-      if (inflight) return Promise.resolve();
+      if (inflight) return inflight;
       var batch = nextBatch();
       if (!batch) return Promise.resolve();
-      inflight = true;
       var body = JSON.stringify(batch);
-      return fetch(endpoint, {
+      inflight = fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: body,
         credentials: 'same-origin',
         keepalive: body.length < BEACON_LIMIT,
       }).then(function (r) {
-        inflight = false;
+        inflight = null;
         if (r.ok) {
-          drop(batch);
+          dropIds(batch.events.map(function (e) { return e.id; }));
           backoff = 0;
-          if (outbox.length) scheduleFlush(0);
+          if (sendable().length) scheduleFlush(0);
           return;
         }
         if (r.status === 401) {
-          // not signed in yet: keep everything for after the sign-in
+          // not signed in as far as the server knows: keep everything for later
           blockedUntil = Date.now() + MAX_BACKOFF_MS;
           return;
         }
+        if (r.status === 400) {
+          // the server named the one event it will never take; the rest is fine
+          return r.json().catch(function () { return {}; }).then(function (info) {
+            var bad = typeof info.index === 'number' && batch.events[info.index]
+              ? [batch.events[info.index].id]
+              : batch.events.map(function (e) { return e.id; });
+            dropIds(bad);
+            try { console.warn('tracker: event rejected', info.error); } catch (e) {}
+            if (sendable().length) scheduleFlush(0);
+          });
+        }
         if (r.status >= 400 && r.status < 500 && r.status !== 429) {
-          // the server will never take this batch: it is not worth keeping
-          drop(batch);
+          dropIds(batch.events.map(function (e) { return e.id; }));
           try { console.warn('tracker: batch rejected', r.status); } catch (e) {}
-          if (outbox.length) scheduleFlush(0);
+          if (sendable().length) scheduleFlush(0);
           return;
         }
         retryLater();
       }).catch(function () {
-        inflight = false;
+        inflight = null;
         retryLater();
       });
+      return inflight;
     }
 
     function retryLater() {
@@ -154,6 +179,7 @@
 
     function beacon() {
       try {
+        if (inflight) return;                  // a keepalive post is already carrying it
         var batch = nextBatch();
         if (!batch || !navigator.sendBeacon) return;
         var body = JSON.stringify(batch);
@@ -166,7 +192,6 @@
     function session(spec) {
       spec = spec || {};
       var id = uuid();
-      var shownAt = {};
       var lastAt = {};
       var tries = {};
       var open = true;
@@ -181,16 +206,16 @@
         id: id,
         presented: function (seq, item, prompt) {
           try {
-            shownAt[seq] = Date.now();
-            lastAt[seq] = shownAt[seq];
+            lastAt[seq] = Date.now();
             emit('item.presented', { session: id, seq: seq, item: String(item), prompt: prompt });
           } catch (e) {}
         },
         answered: function (seq, item, r) {
           try {
             r = r || {};
-            var t = Date.now();
-            var latencyMs = lastAt[seq] ? t - lastAt[seq] : undefined;
+            // her thinking time ends when she submits, not when a judge answers
+            var t = typeof r.submittedAt === 'number' ? r.submittedAt : Date.now();
+            var latencyMs = lastAt[seq] ? Math.max(0, t - lastAt[seq]) : undefined;
             lastAt[seq] = t;
             tries[seq] = (tries[seq] || 0) + 1;
             emit('item.answered', {
@@ -228,6 +253,11 @@
             scheduleFlush(0);
           } catch (e) {}
         },
+        /* the page is going away: say so, but if it comes back from the
+           cache and she finishes, the completion must still be reported */
+        suspended: function () {
+          try { if (open) emit('session.abandoned', { session: id }); } catch (e) {}
+        },
         isOpen: function () { return open; },
       };
       openSessions.push(handle);
@@ -235,8 +265,7 @@
     }
 
     function onLeave() {
-      // leaving the page mid-round is the end of the round
-      openSessions.forEach(function (h) { if (h.isOpen()) h.abandoned(); });
+      openSessions.forEach(function (h) { h.suspended(); });
       beacon();
     }
     try {
@@ -248,29 +277,38 @@
 
     var tracker = {
       app: app,
+      /* who is signed in; queued events of anyone else stay queued */
+      setUser: function (sub) {
+        try {
+          user = sub == null ? null : String(sub);
+          blockedUntil = 0;
+          if (sendable().length) scheduleFlush(0);
+        } catch (e) {}
+      },
       session: function (spec) {
         try { return session(spec); } catch (e) { return noopSession(); }
       },
       flush: flush,
-      pending: function () { return outbox.length; },
+      pending: function () { return sendable().length; },
+      queued: function () { return outbox.length; },
     };
     instances.push(tracker);
-    if (outbox.length) scheduleFlush(0);
     return tracker;
   }
 
   function noopSession() {
     var f = function () {};
-    return { id: null, presented: f, answered: f, skipped: f, completed: f, abandoned: f, isOpen: function () { return false; } };
+    return { id: null, presented: f, answered: f, skipped: f, completed: f, abandoned: f, suspended: f, isOpen: function () { return false; } };
   }
 
   window.Tracker = {
     init: function (opts) {
       try { return init(opts); } catch (e) {
-        return { app: opts && opts.app, session: noopSession, flush: function () { return Promise.resolve(); }, pending: function () { return 0; } };
+        return { app: opts && opts.app, setUser: function () {}, session: noopSession,
+          flush: function () { return Promise.resolve(); }, pending: function () { return 0; }, queued: function () { return 0; } };
       }
     },
-    /* for tests: post everything every instance still holds */
+    /* for tests: post everything every instance may still post */
     flushAll: function () {
       return Promise.all(instances.map(function (t) { return t.flush(); }));
     },

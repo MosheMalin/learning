@@ -100,3 +100,16 @@ folded into a follow-up commit:
   clock runs ahead.
 - Scratch space is the session scratchpad or `D:\tmp`, never bare `/tmp`
   (Git Bash and the file tools map it to different directories).
+- A script the app loads from another Worker must be `async`; a hung
+  tracker once meant a hung app. The app binds to `window.Tracker` lazily.
+- Two copies of "first try" (the app's point vs the fold's first result)
+  disagreed on a yellow-then-fixed sentence; the fold now takes the app's
+  score as the truth. When two places must agree, make one derive from the other.
+- A queued outbox with no owner posts under whoever signs in next on a
+  shared laptop: anything queued client-side is stamped with its account.
+- `git add -A` picks up agent worktrees under `.claude/worktrees/`; it is
+  gitignored now, but check `git status` before a commit after reviews.
+- Bash heredocs in this environment break on content with backticks and
+  quotes; write such files with the Write tool.
+- Node ≥ 22.13 is needed for `node:sqlite` (the fold's unit tests);
+  `npm install` at the root links `shared/auth` before any wrangler deploy.
