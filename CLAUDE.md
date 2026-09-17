@@ -87,6 +87,13 @@ folded into a follow-up commit:
 | `review-security` | opus | new routes, inputs, cookies, Claude calls, proxies, secrets |
 | `review-ux` | sonnet | anything the child or the parent sees — verifies in a real browser |
 
+**Cost:** the reviewers were half of one session's tokens. Security and
+data-integrity run on Opus (adversarial reasoning is where they earn it);
+quality and UX run on Sonnet (mutation runs and browser walks are
+mechanical). Spawn only the reviewers the item's scope calls for, review a
+phase once rather than each follow-up commit, and never spawn a reviewer as
+a general-purpose agent without `model` (it inherits the parent model).
+
 ## Traps already paid for
 
 - `hidden` elements that are still clickable ran a score past the number of
