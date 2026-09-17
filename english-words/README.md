@@ -80,6 +80,10 @@ Everything goes through `practice.track`, which is `null` when the SDK is not
 there, so the app behaves identically without it. The contract of what a round
 reports is pinned by `tests/tracking.spec.js`.
 
+The tracker also gives back: the list screen asks it which words she keeps
+missing (`/learning/track/v1/me/units/english-words/<listId>`) and, when there
+are any, offers a round of just those. No tracker, no offer.
+
 ## Tech
 
 Plain HTML/CSS/JS in the browser, no build step. Sign-in, storage and the two

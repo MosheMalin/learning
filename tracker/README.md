@@ -11,6 +11,7 @@ src/ingest.js      what a batch may look like (sizes, ids, event types)
 src/fold.js        events -> sessions / attempts / activities; rebuild from the log
 src/people.js      who is a parent, who is a student, the (one) family
 src/parent-api.js  what the dashboard reads
+src/me-api.js      what a student may read about themself (the weak-words rule)
 migrations/        D1 schema, one numbered file per change - never edit an applied one
 public/learning/track/v1/tracker.js   the client SDK every app loads
 public/learning/parent/               the dashboard (plain HTML/JS, Hebrew, RTL)

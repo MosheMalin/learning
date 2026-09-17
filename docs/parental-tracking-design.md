@@ -349,9 +349,9 @@ shared:  LEARNING_KV (sessions, already shared by name)   D1 learning-tracker   
   batch names the offending event's `index`, and the SDK drops only that one.
 - **Auth for the dashboard** `POST auth/login`, `POST auth/logout`, `GET auth/me`,
   and `GET auth/config` (the public Google client id, so no page copies it).
-- **Student read API** `GET /learning/track/v1/me/...` — a student's own summary,
-  for apps that want to show "the words you got wrong this week" or feed a
-  mistakes-first queue. Not needed for the dashboard; cheap to expose.
+- **Student read API** `GET /learning/track/v1/me/units/:app/:unitId` — a
+  student's own mastery of one unit and which items need work, for apps that
+  offer a mistakes-first round. Scoped to the cookie's student; any role.
 - **Parent API** under `/learning/parent/api/` (role `parent` required):
   - `GET students` — family members, last active, this-week counts.
   - `GET students/:sub/sessions?from&to&app` — the timeline.
@@ -484,8 +484,12 @@ Cross-app by construction: every screen is built from `sessions` / `attempts` /
    student timeline + heatmap, session, unit mastery). `PARENT_EMAILS`, student
    auto-enrolment, rename/grade/hide, marking another person as a parent,
    hiding a session.
-3. **Feedback into the apps** — `me/` API; english-words offers "the words you
-   missed this week" as a round.
+3. **Feedback into the apps** — done 2026-09-17: `GET /learning/track/v1/me/units/:app/:unitId`
+   returns the signed-in student's own mastery of a list and the words that
+   need work (one rule, in `tracker/src/me-api.js`: missed last time, or right
+   fewer than twice in the last three). The list screen offers a round of
+   exactly those words; such rounds report `params.source = 'weak'` and the
+   dashboard labels them. Without the tracker the offer never appears.
 4. **Tanach** — the second app uses the same SDK from day one: questionnaire =
    unit, question part = item, MCQ choices shown in `prompt`, open answers judged
    by Claude with partial `score / maxScore`.
