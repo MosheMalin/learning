@@ -108,7 +108,7 @@ export async function parentApi({ request, env, url, person, now, json, readJson
   }
 
   if ((m = route.match(/^students\/([^/]+)\/units\/([^/]+)\/(.+)$/)) && method === 'GET') {
-    const [, sub, app, unitId] = m;
+    const [sub, app, unitId] = m.slice(1).map(decode);
     if (!await student(sub)) return json({ error: 'not found' }, 404);
     const unit = await db.prepare('SELECT title, definition FROM activities WHERE app = ? AND id = ?')
       .bind(app, unitId).first();
@@ -161,6 +161,9 @@ export async function parentApi({ request, env, url, person, now, json, readJson
 }
 
 const weekAgo = now => new Date(Date.parse(now) - 7 * 86400000).toISOString();
+
+/* path segments arrive percent-encoded; ids are stored as the app wrote them */
+const decode = s => { try { return decodeURIComponent(s); } catch { return s; } };
 
 const parseJsonColumns = cols => row => {
   const out = { ...row };

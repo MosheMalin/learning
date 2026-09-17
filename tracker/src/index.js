@@ -118,6 +118,7 @@ export default {
       if (route.startsWith('me/') && method === 'GET') {
         const user = await currentUser(request, env);
         if (!user) return json({ error: 'not logged in' }, 401);
+        if (!await withinRate(env, user.sub, now)) return json({ error: 'too many requests' }, 429);
         const person = await ensurePerson(env.DB, env, user, now);
         return meApi({ env, url, person, json });
       }

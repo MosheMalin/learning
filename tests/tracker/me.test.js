@@ -55,11 +55,30 @@ test('a student sees only their own weak words', async () => {
   const mine = await (await call(env, '/learning/track/v1/me/units/english-words/l1', { sid: 'k1' })).json();
   assert.deepEqual(mine.weak, ['cat']);
   assert.deepEqual(mine.items.map(i => [i.item_id, i.seen, i.weak]).sort(), [['cat', 1, true], ['dog', 1, false]]);
-  // the sibling has no history on this list, and the parent route is not theirs
+  // the sibling has no history on this list: not even its word list comes back
   const theirs = await (await call(env, '/learning/track/v1/me/units/english-words/l1', { sid: 'k2' })).json();
-  assert.deepEqual(theirs.weak, []);
+  assert.deepEqual(theirs, { items: [], weak: [] });
   assert.equal((await call(env, '/learning/track/v1/me/units/english-words/l1')).status, 401);
   assert.equal((await call(env, '/learning/parent/api/students', { sid: 'k1' })).status, 403);
+});
+
+test('a unit id with awkward characters round-trips through the URL', async () => {
+  const env = makeEnv(freshDb());
+  const r = round('sess-0002', '2026-09-16T18:00:');
+  r.events[0].unit.id = 'list 1/a';
+  await call(env, '/learning/track/v1/events', { method: 'POST', sid: 'k1', body: r });
+  const mine = await (await call(env, '/learning/track/v1/me/units/english-words/' + encodeURIComponent('list 1/a'), { sid: 'k1' })).json();
+  assert.deepEqual(mine.weak, ['cat']);
+});
+
+test('the student view is rate-limited like ingest', async () => {
+  const env = makeEnv(freshDb());
+  let last;
+  for (let i = 0; i < 101; i++) {
+    last = await call(env, '/learning/track/v1/me/units/english-words/l1', { sid: 'k1' });
+    if (last.status !== 200) break;
+  }
+  assert.equal(last.status, 429);
 });
 
 test('the weak rule: the last time, or two of the last three', () => {
