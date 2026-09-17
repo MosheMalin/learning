@@ -69,6 +69,13 @@ const isoToday = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60
 
 /* ---------- scores ---------- */
 const statusLabel = { completed: '', in_progress: 'בתהליך', abandoned: 'הפסיקה באמצע' };
+/* where the round's words came from, when not the whole list */
+function sourceTag(params) {
+  if (!params) return '';
+  if (params.source === 'weak') return ' <span class="tag">חיזוק מילים קשות</span>';
+  if (params.mistakesOnly) return ' <span class="tag">חזרה על טעויות</span>';
+  return '';
+}
 const resultLabel = { correct: 'נכון', almost: 'כמעט', wrong: 'לא נכון', unjudged: 'לא נבדק', skipped: 'דילגה' };
 
 /* A finished round shows its score; an unfinished one says how far she got,
@@ -274,7 +281,7 @@ async function renderSessions(sub, token) {
     <tr class="link" data-id="${escapeHtml(s.id)}">
       <td>${when(s.started_at)}<div class="status">${hebOf(s.started_at)}</div></td>
       <td><a href="#/u/${encodeURIComponent(sub)}/${encodeURIComponent(s.app)}/${encodeURIComponent(s.unit_id)}">${escapeHtml(s.unit_title || s.unit_id)}</a><div class="status">${escapeHtml(appName(s.app))}</div></td>
-      <td>${escapeHtml(s.exercise_title || s.exercise_id)}${s.params && s.params.mistakesOnly ? ' <span class="tag">חזרה על טעויות</span>' : ''}</td>
+      <td>${escapeHtml(s.exercise_title || s.exercise_id)}${sourceTag(s.params)}</td>
       <td>${scoreCell(s)}</td>
       <td>${minutes(s.duration_ms)}</td>
     </tr>`).join('');
@@ -401,7 +408,8 @@ async function renderSession(id, token) {
     `<a href="#/s/${encodeURIComponent(s.student)}">${escapeHtml(studentName(s.student))}</a>`,
     escapeHtml(whenLong(s.started_at)), escapeHtml(appName(s.app)), escapeHtml(minutes(s.duration_ms)),
   ];
-  if (s.params && s.params.mistakesOnly) {
+  if (s.params && s.params.source === 'weak') parts.push('חיזוק המילים שהתקשתה בהן');
+  else if (s.params && s.params.mistakesOnly) {
     parts.push(s.params.retryOf
       ? `<a href="#/r/${encodeURIComponent(s.params.retryOf)}">חזרה על הטעויות מהתרגול הקודם</a>`
       : 'חזרה על הטעויות מהתרגול הקודם');

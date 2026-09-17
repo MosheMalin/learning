@@ -133,6 +133,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.wfile.write(data)
             self._skip_nocache = False
             return
+        if path.startswith('/learning/track/v1/me/') and self.command == 'GET':
+            if not self.has_session():
+                return self.send_json({'error': 'not logged in'}, 401)
+            return self.send_json({'items': [], 'weak': []})   # no history without a tracker
         if path == '/learning/track/v1/events' and self.command == 'POST':
             if not self.has_session():   # exactly what production answers
                 return self.send_json({'error': 'not logged in'}, 401)

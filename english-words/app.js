@@ -639,7 +639,40 @@ function renderListView() {
   tbody.querySelectorAll('.row-speak').forEach(btn => {
     btn.addEventListener('click', () => speak(list.words[+btn.dataset.i].en));
   });
+  offerWeakWords(list);
 }
+
+/* ---------- "the words you found hard" ----------
+   The tracker knows how every round went; asked about this list, it names
+   the words she keeps missing. If it cannot be reached, or has nothing to
+   say, the button simply stays away. */
+
+const btnWeak = document.getElementById('btn-weak');
+let weakWords = [];   // the list's words the tracker flagged, for the button
+
+async function offerWeakWords(list) {
+  btnWeak.hidden = true;
+  weakWords = [];
+  if (!currentUser) return;
+  let ids;
+  try {
+    const r = await fetch(`/learning/track/v1/me/units/english-words/${encodeURIComponent(list.id)}`, { credentials: 'same-origin' });
+    if (!r.ok) return;
+    ids = new Set(((await r.json()).weak || []).map(normEn));
+  } catch { return; }
+  // she may have moved on to another list while we asked
+  if (currentListId !== list.id) return;
+  weakWords = list.words.filter(w => ids.has(normEn(w.en)));
+  if (!weakWords.length) return;
+  btnWeak.textContent = weakWords.length === 1
+    ? '💪 לחזק את המילה שהתקשית בה'
+    : `💪 לחזק ${weakWords.length} מילים שהתקשית בהן`;
+  btnWeak.hidden = false;
+}
+
+btnWeak.addEventListener('click', () => {
+  if (weakWords.length) startPractice('he2en', weakWords, { source: 'weak' });
+});
 
 document.getElementById('btn-edit-list').addEventListener('click', () => openEditor(currentListId));
 
@@ -662,7 +695,9 @@ const encourage = ['לא נורא, ננסה שוב! 💪', 'זה בסדר לטע
 
 let practice = null; // { mode, queue, index, correct, wrong, listId }
 
-function startPractice(mode, words, { retryOf = null } = {}) {
+/* source: where the words came from - 'list' (all of it), 'retry' (the round's
+   mistakes), 'weak' (what the tracker says she keeps missing) */
+function startPractice(mode, words, { retryOf = null, source = retryOf ? 'retry' : 'list' } = {}) {
   if (!words || words.length === 0) return;
   stopSpeech();
   // a round started from the summary is over; one started over a live round gives it up
@@ -686,7 +721,7 @@ function startPractice(mode, words, { retryOf = null } = {}) {
       id: list.id, kind: 'wordlist', title: list.name, examDate: list.examDate || null,
       items: list.words.map(w => ({ id: normEn(w.en), en: w.en, he: w.he })),
     } : null,
-    params: { itemCount: words.length, retryOf, mistakesOnly: !!retryOf },
+    params: { itemCount: words.length, retryOf, source, mistakesOnly: source !== 'list' },
   });
   show('practice');
   showQuestion();

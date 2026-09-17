@@ -204,8 +204,9 @@ async function nextExamOf(db, sub, today) {
 }
 
 /* Per item of one unit, across every round of it: how many times, how often
-   right first time, and the last few results newest first. */
-async function masteryOf(db, sub, app, unitId) {
+   right first time, and the last few results newest first. Shared with the
+   student's own view (me-api.js). */
+export async function masteryOf(db, sub, app, unitId) {
   const { results: items } = await db.prepare(
     `SELECT id, title, definition FROM activities WHERE app = ? AND kind = 'item' AND parent_id = ?`)
     .bind(app, unitId).all();

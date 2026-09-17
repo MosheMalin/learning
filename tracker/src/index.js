@@ -5,6 +5,7 @@
 //   POST /learning/track/v1/auth/logout
 //   GET  /learning/track/v1/auth/me
 //   GET  /learning/track/v1/auth/config     the public Google client id, so no page has to copy it
+//   GET  /learning/track/v1/me/units/:app/:unitId   the signed-in student's own weak items
 //   GET  /learning/track/v1/tracker.js      the client SDK (a static asset)
 //   GET  /learning/parent/                  the parent dashboard (static assets)
 //   *    /learning/parent/api/*             the parent API (parents only)
@@ -19,6 +20,7 @@ import { validateBatch, MAX_BODY_BYTES } from './ingest.js';
 import { ingestEvents } from './fold.js';
 import { ensurePerson } from './people.js';
 import { parentApi } from './parent-api.js';
+import { meApi } from './me-api.js';
 
 /* batches one student may post per minute - a stuck client, not a child, is
    the only thing that gets near it */
@@ -112,6 +114,12 @@ export default {
         };
         const result = await ingestEvents(env.DB, ctx, v.events);
         return json(result);
+      }
+      if (route.startsWith('me/') && method === 'GET') {
+        const user = await currentUser(request, env);
+        if (!user) return json({ error: 'not logged in' }, 401);
+        const person = await ensurePerson(env.DB, env, user, now);
+        return meApi({ env, url, person, json });
       }
       if (method === 'GET' && env.ASSETS) return env.ASSETS.fetch(request);   // tracker.js
       return json({ error: 'not found' }, 404);

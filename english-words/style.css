@@ -643,3 +643,6 @@ body.typing-screen #kbd-magic { display: block; }
   .app-header h1 { font-size: 1.6rem; }
   .question-word { font-size: 1.8rem; }
 }
+
+/* the tracker's "words you found hard" offer, above the practice modes */
+.weak-btn { margin: 0 auto 1em; display: block; }
