@@ -7,7 +7,7 @@ const { freshDb } = require('./d1-sqlite.js');
 let worker, me;
 test.before(async () => {
   worker = (await import('../../tracker/src/index.js')).default;
-  me = await import('../../tracker/src/me-api.js');
+  me = await import('../../tracker/src/mastery.js');
 });
 
 function makeEnv(db) {
@@ -81,7 +81,7 @@ test('the student view is rate-limited like ingest', async () => {
   assert.equal(last.status, 429);
 });
 
-test('the weak rule: the last time, or two of the last three', () => {
+test('the weak rule, shared by the app offer and the dashboard: the last time, or two of the last three', () => {
   const item = recent => ({ seen: recent.length, recent: recent.map(f => ({ first_try: f })) });
   assert.equal(me.isWeak(item([])), false);
   assert.equal(me.isWeak(item([false])), true);              // missed last time

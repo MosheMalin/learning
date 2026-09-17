@@ -360,14 +360,15 @@ async function renderUnit(sub, app, unitId, token) {
   $('unit-title').textContent = unit ? unit.title : unitId;
   const exam = unit && unit.definition && unit.definition.examDate;
   $('unit-sub').textContent = [appName(app), exam ? examLine(exam) : ''].filter(Boolean).join(' · ');
-  // weakest first: never seen, then lowest first-try rate, then least seen
+  // the tracker's own "needs work" first (the same rule the app's offer uses),
+  // then never seen, then by first-try rate
   const rate = it => it.seen ? it.first_try_correct / it.seen : -1;
-  items.sort((a, b) => rate(a) - rate(b) || a.seen - b.seen);
+  items.sort((a, b) => (b.weak ? 1 : 0) - (a.weak ? 1 : 0) || rate(a) - rate(b) || a.seen - b.seen);
   const tbody = $('mastery-table').querySelector('tbody');
   tbody.innerHTML = items.map(it => {
     const def = it.definition || {};
     const label = def.en ? `<span class="en">${escapeHtml(def.en)}</span> · ${escapeHtml(def.he || '')}` : escapeHtml(it.title || it.item_id);
-    const weak = it.seen && rate(it) < 0.5;
+    const weak = !!it.weak;
     const dots = it.recent.map(r => {
       const cls = r.result === 'correct' && !r.first_try ? 'retry' : r.result;
       const label2 = r.first_try ? 'נכון מיד' : (resultLabel[r.result] || r.result) + (r.result === 'correct' ? ' בניסיון נוסף' : '');

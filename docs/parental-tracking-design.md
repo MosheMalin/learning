@@ -158,7 +158,7 @@ One `POST` carries a batch. This is the "common interface":
         "examDate": "2026-09-18",
         "items": [ { "id": "dog", "en": "dog", "he": "כלב" }, { "id": "house", "en": "house", "he": "בית" } ]
       },
-      "params": { "itemCount": 12, "retryOf": null, "mistakesOnly": false }
+      "params": { "itemCount": 12, "retryOf": null, "source": "list", "mistakesOnly": false }
     },
     {
       "id": "…", "type": "item.presented", "at": "…", "session": "9b0e…",
@@ -486,10 +486,13 @@ Cross-app by construction: every screen is built from `sessions` / `attempts` /
    hiding a session.
 3. **Feedback into the apps** — done 2026-09-17: `GET /learning/track/v1/me/units/:app/:unitId`
    returns the signed-in student's own mastery of a list and the words that
-   need work (one rule, in `tracker/src/me-api.js`: missed last time, or right
-   fewer than twice in the last three). The list screen offers a round of
-   exactly those words; such rounds report `params.source = 'weak'` and the
-   dashboard labels them. Without the tracker the offer never appears.
+   need work (one rule, `isWeak` in `tracker/src/mastery.js`: missed last time,
+   or right fewer than twice in the last three; the dashboard's row highlight
+   and the home card's exam line use the same rule). Only units the student
+   has practised answer. The list screen offers a round of exactly those words;
+   such rounds report `params.source = 'weak'` (`source` is `list`, `retry` or
+   `weak`) and the dashboard labels them. Without the tracker the offer never
+   appears.
 4. **Tanach** — the second app uses the same SDK from day one: questionnaire =
    unit, question part = item, MCQ choices shown in `prompt`, open answers judged
    by Claude with partial `score / maxScore`.
