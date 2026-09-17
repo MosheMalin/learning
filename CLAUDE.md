@@ -80,12 +80,12 @@ it (`.claude/skills/cycle/SKILL.md`). Reviewers are project agents under
 `.claude/agents/`, spawned in the background after a commit; findings are
 folded into a follow-up commit:
 
-| agent | when |
-|---|---|
-| `review-quality` | any substantive change (attacks the new tests, hunts second copies of a rule) |
-| `review-data-integrity` | anything that stores or derives data: KV writes, the tracker fold, migrations, scoring |
-| `review-security` | new routes, inputs, cookies, Claude calls, proxies, secrets |
-| `review-ux` | anything the child or the parent sees — verifies in a real browser |
+| agent | model | when |
+|---|---|---|
+| `review-quality` | sonnet | any substantive change (attacks the new tests, hunts second copies of a rule) |
+| `review-data-integrity` | opus | anything that stores or derives data: KV writes, the tracker fold, migrations, scoring |
+| `review-security` | opus | new routes, inputs, cookies, Claude calls, proxies, secrets |
+| `review-ux` | sonnet | anything the child or the parent sees — verifies in a real browser |
 
 ## Traps already paid for
 

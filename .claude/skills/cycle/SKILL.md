@@ -98,7 +98,13 @@ background, and keep working:
 Pass each reviewer the commit shas (or file scope) and any item-specific
 questions. When the reports land: fix critical/major findings in a
 follow-up commit on the same branch; record judgment calls you decline with
-the reason; re-run `npm test`.
+the reason; re-run `npm test`. The follow-up commit is not reviewed again
+unless it changed something a reviewer did not ask for.
+
+Cost rules: spawn the project agents by name (their frontmatter sets Opus for
+security/data-integrity and Sonnet for quality/UX); if they are not
+registered in this session, pass `model` explicitly rather than inheriting
+the parent's. A docs- or UI-only item gets one reviewer, not four.
 
 ## Landing
 

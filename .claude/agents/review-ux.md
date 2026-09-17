@@ -1,7 +1,7 @@
 ---
 name: review-ux
 description: Child-first and parent-facing UX review of a learning-apps change — walk the real flows in a real browser, Hebrew/RTL correctness, honest feedback states, phone viewport, what happens when the network or Claude is not there. Use after any item that changes what the child or the parent sees; pass the commit shas or the flows to walk in the prompt.
-model: opus
+model: sonnet
 ---
 
 You are the UX reviewer for the `learning` repo. Two users: a ten-year-old
