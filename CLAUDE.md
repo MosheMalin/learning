@@ -15,9 +15,12 @@ english-words/    daughter's weekly spelling practice (הכתבה) — static HT
                   sentence exercises); functions/tts.js = voice proxy
 router-worker/    Worker on the malinvishne.com apex: path prefix → Pages app;
                   APPS map in src/index.js; serves the family home page at /
-tracker/          (planned — docs/parental-tracking-design.md) Worker + D1:
-                  every app reports what each student did; parent dashboard
-shared/           (planned) code both Pages Functions and Workers bundle
+tracker/          Worker + D1 (docs/parental-tracking-design.md): every app
+                  reports what each student did through the SDK it serves at
+                  /learning/track/v1/tracker.js; the parent dashboard lives at
+                  /learning/parent/. Reached via the router's service binding.
+shared/auth/      Google sign-in + the shared session cookie; a workspace
+                  package bundled by both the Pages Functions and the Worker
 tests/            Playwright end-to-end tests driving the real page; /api/*
                   and Google are stubbed in tests/app-fixture.js
 serve.py          local static server with fake /api/*, /tts and canned
@@ -25,12 +28,13 @@ serve.py          local static server with fake /api/*, /tts and canned
 materials/ questions/   Tanach bagrut research for the son's future app
 ```
 
-Run locally: `preview_start` with launch.json name `english-words`
-(never Bash for servers). Tests: `npm test` (Playwright, chromium). Deploy:
-`deploy-english-words.ps1` for the app, `npx wrangler deploy` inside
-`router-worker/` for the router — **deploy only when the owner asks**, and
-bump the `?v=` query on `style.css`/`app.js` in `index.html` with every app
-change or phones keep the old file.
+Run locally: `preview_start` with launch.json names `english-words` and
+`tracker` (never Bash for servers; serve.py proxies the tracker paths to
+:8787 when it is up). Tests: `npm test` = the fold's unit tests (node:test on
+Node's built-in SQLite) then Playwright. Deploy: `deploy-english-words.ps1`
+for the app, `deploy-tracker.ps1` for the tracker + router — **deploy only
+when the owner asks**, and bump the `?v=` query on `style.css`/`app.js` in an
+`index.html` with every change to them or phones keep the old file.
 
 ## Rules
 
@@ -96,3 +100,16 @@ folded into a follow-up commit:
   clock runs ahead.
 - Scratch space is the session scratchpad or `D:\tmp`, never bare `/tmp`
   (Git Bash and the file tools map it to different directories).
+- A script the app loads from another Worker must be `async`; a hung
+  tracker once meant a hung app. The app binds to `window.Tracker` lazily.
+- Two copies of "first try" (the app's point vs the fold's first result)
+  disagreed on a yellow-then-fixed sentence; the fold now takes the app's
+  score as the truth. When two places must agree, make one derive from the other.
+- A queued outbox with no owner posts under whoever signs in next on a
+  shared laptop: anything queued client-side is stamped with its account.
+- `git add -A` picks up agent worktrees under `.claude/worktrees/`; it is
+  gitignored now, but check `git status` before a commit after reviews.
+- Bash heredocs in this environment break on content with backticks and
+  quotes; write such files with the Write tool.
+- Node ≥ 22.13 is needed for `node:sqlite` (the fold's unit tests);
+  `npm install` at the root links `shared/auth` before any wrangler deploy.

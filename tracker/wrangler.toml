@@ -1,0 +1,41 @@
+name = "learning-tracker"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Reached only through the router Worker's service binding on the family
+# domain - the cookie is scoped to that domain, so a public workers.dev
+# address would be useless anyway.
+workers_dev = false
+
+# The parent dashboard and the client SDK, served as static files at the same
+# paths the router forwards.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[vars]
+# Who is a parent. The seed only: more parents are added from the dashboard.
+PARENT_EMAILS = "mmozzess@gmail.com"
+# Must match GOOGLE_CLIENT_ID in english-words (wrangler.toml and app.js).
+GOOGLE_CLIENT_ID = "731852048497-pved0t60dqc1pskdkj6tko4ct0qs8dtn.apps.googleusercontent.com"
+
+# The same namespace the apps keep their sessions in - that is what makes one
+# sign-in work everywhere.
+[[kv_namespaces]]
+binding = "LEARNING_KV"
+id = "cf6e4104021740bda556bc55989b2886"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "learning-tracker"
+database_id = "REPLACE-AFTER-wrangler-d1-create"
+migrations_dir = "migrations"
+
+# ---- local development: `npx wrangler dev --env dev` ----
+# DEV_SESSIONS turns fixed cookie values into users, so serve.py's `sid=dev`
+# and a `sid=parent` set by /learning/track/v1/dev-login work with no Google.
+# It exists only in this environment; a production deploy never has it.
+[env.dev]
+vars = { PARENT_EMAILS = "parent@local", GOOGLE_CLIENT_ID = "", DEV_SESSIONS = '{"dev":{"sub":"dev","email":"dev@local","name":"משתמש פיתוח","picture":""},"kid2":{"sub":"kid2","email":"kid2@local","name":"ילד שני","picture":""},"parent":{"sub":"parent","email":"parent@local","name":"הורה","picture":""}}' }
+kv_namespaces = [{ binding = "LEARNING_KV", id = "cf6e4104021740bda556bc55989b2886" }]
+d1_databases = [{ binding = "DB", database_name = "learning-tracker", database_id = "local", migrations_dir = "migrations" }]

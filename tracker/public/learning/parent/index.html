@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>מעקב הורים · הלמידה של המשפחה</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
+<link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="#/">📊 מעקב הורים</a>
+  <nav id="crumbs" class="crumbs"></nav>
+  <div id="auth" class="auth"></div>
+</header>
+
+<main id="main">
+  <!-- sign-in gate -->
+  <section id="screen-login" class="screen" hidden>
+    <div class="card gate">
+      <h1>מעקב הורים</h1>
+      <p>מה כל ילד תרגל, שאלה אחרי שאלה, בכל האפליקציות של המשפחה.</p>
+      <div id="gsi-btn"></div>
+      <p id="login-note" class="muted"></p>
+      <button id="gate-logout" class="small-btn" hidden>יציאה והתחברות בחשבון אחר</button>
+    </div>
+  </section>
+
+  <!-- home: one card per student -->
+  <section id="screen-home" class="screen" hidden>
+    <div id="students" class="cards"></div>
+    <p class="row-actions"><button id="toggle-hidden" class="small-btn" hidden></button></p>
+    <p class="muted small">ילד מופיע כאן אחרי התרגול הראשון שלו. הורה נוסף: להוסיף את הכתובת ל־PARENT_EMAILS, או לסמן אותו כאן כהורה.</p>
+  </section>
+
+  <!-- one student: heatmap + sessions -->
+  <section id="screen-student" class="screen" hidden>
+    <div class="student-head">
+      <h1 id="student-name"></h1>
+      <div class="filters">
+        <label>אפליקציה
+          <select id="filter-app"><option value="">הכל</option></select>
+        </label>
+        <label>מ־<input type="date" id="filter-from"></label>
+        <label>עד <input type="date" id="filter-to"></label>
+        <button id="btn-units" class="small-btn">📚 רשימות ומבחנים</button>
+        <button id="btn-edit-student" class="small-btn">✏️</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>ימי תרגול</h2>
+      <div id="heatmap-months" class="heatmap-months"></div>
+      <div id="heatmap" class="heatmap"></div>
+      <div class="legend"><span class="day"></span> בלי תרגול <span class="day l1"></span> תרגול אחד <span class="day l3"></span> כמה <span class="day today"></span> היום</div>
+    </div>
+    <div class="card">
+      <h2>תרגולים</h2>
+      <table class="table" id="sessions-table">
+        <thead><tr><th>מתי</th><th>מה</th><th>איך</th><th>ציון</th><th>זמן</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="sessions-empty" class="muted" hidden>עוד אין תרגולים בתקופה הזאת.</p>
+    </div>
+  </section>
+
+  <!-- units of one student -->
+  <section id="screen-units" class="screen" hidden>
+    <h1 id="units-title"></h1>
+    <div id="units" class="cards"></div>
+  </section>
+
+  <!-- mastery of one unit -->
+  <section id="screen-unit" class="screen" hidden>
+    <h1 id="unit-title"></h1>
+    <p id="unit-sub" class="muted"></p>
+    <div class="card">
+      <table class="table" id="mastery-table">
+        <thead><tr><th>מילה</th><th>פעמים</th><th>נכון מיד</th><th>לאחרונה</th><th>נראה לאחרונה</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="legend"><span class="dot correct"></span> נכון מיד <span class="dot retry"></span> נכון בניסיון נוסף <span class="dot almost"></span> כמעט <span class="dot wrong"></span> לא נכון <span class="dot unjudged"></span> לא נבדק · החדש ביותר משמאל</div>
+    </div>
+  </section>
+
+  <!-- one session, question by question -->
+  <section id="screen-session" class="screen" hidden>
+    <h1 id="session-title"></h1>
+    <p id="session-sub" class="muted"></p>
+    <div class="card">
+      <table class="table" id="attempts-table">
+        <thead><tr><th>#</th><th>השאלה</th><th>התשובות שלה</th><th>תוצאה</th><th>זמן לתשובה</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="row-actions">
+      <button id="btn-delete-session" class="small-btn danger">🗑️ להסתיר את התרגול הזה</button>
+    </div>
+  </section>
+</main>
+
+<!-- edit a student -->
+<div id="edit-overlay" class="overlay" hidden>
+  <div class="card modal">
+    <h2>פרטי הילד/ה</h2>
+    <label>שם לתצוגה <input type="text" id="edit-name"></label>
+    <label>כיתה <input type="text" id="edit-grade" placeholder="ה'"></label>
+    <label class="check"><input type="checkbox" id="edit-hidden"> להסתיר מהמסך הראשי</label>
+    <label class="check"><input type="checkbox" id="edit-parent"> זה הורה (רואה את כל המשפחה)</label>
+    <div class="modal-actions">
+      <button id="edit-save" class="small-btn primary">שמירה</button>
+      <button id="edit-cancel" class="small-btn">ביטול</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=2"></script>
+</body>
+</html>

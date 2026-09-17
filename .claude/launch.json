@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["serve.py", "english-words", "8123"],
       "port": 8123
+    },
+    {
+      "name": "tracker",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["wrangler", "dev", "--config", "tracker/wrangler.toml", "--env", "dev", "--port", "8787"],
+      "port": 8787
     }
   ]
 }

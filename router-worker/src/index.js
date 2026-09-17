@@ -4,9 +4,20 @@ const APPS = {
   '/learning/english/heb-eng/spelling/5-grade': 'https://english-words-726.pages.dev',
 };
 
+// The tracker Worker (events in, parent dashboard out) is reached through a
+// service binding, with the original URL: it routes on the full path itself.
+// (serve.py mirrors this list for local development.)
+const TRACKER_PREFIXES = ['/learning/track/', '/learning/parent/'];
+
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === '/learning/parent') {
+      return Response.redirect(url.origin + '/learning/parent/' + url.search, 301);
+    }
+    if (env.TRACKER && TRACKER_PREFIXES.some(p => url.pathname.startsWith(p))) {
+      return env.TRACKER.fetch(request);
+    }
     for (const [prefix, upstream] of Object.entries(APPS)) {
       if (url.pathname === prefix) {
         // enforce trailing slash so the app's relative URLs resolve correctly
